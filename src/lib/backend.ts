@@ -5,6 +5,7 @@ export type Fragrance = {
   audience: string; description: string; topNotes: string[]; heartNotes: string[];
   baseNotes: string[]; perfumer: string; bottleRating: number | null;
   ratingCount: number | null; imageUrl: string;
+  shelf: 'Collection' | 'Wishlist' | 'Empties'; bottlesOwned: number; bottlesFinished: number; favourite: boolean; priceBought: number | null; currentPrice: number | null;
 };
 
 export type NoteImage = { name: string; imageUrl: string; usageCount: number };

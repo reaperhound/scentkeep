@@ -8,11 +8,14 @@
   import { relaunch } from '@tauri-apps/plugin-process';
   import { backend, type CsvImportReport, type Fragrance, type NoteImage } from '$lib/backend';
 
-  const blank = (): Fragrance => ({ collection: '', name: '', brand: '', year: new Date().getFullYear(), audience: 'Unisex', description: '', topNotes: [], heartNotes: [], baseNotes: [], perfumer: '', bottleRating: null, ratingCount: null, imageUrl: '' });
+  const blank = (): Fragrance => ({ collection: '', name: '', brand: '', year: new Date().getFullYear(), audience: 'Unisex', description: '', topNotes: [], heartNotes: [], baseNotes: [], perfumer: '', bottleRating: null, ratingCount: null, imageUrl: '', shelf: 'Collection', bottlesOwned: 0, bottlesFinished: 0, favourite: false, priceBought: null, currentPrice: null });
   let fragrance = $state<Fragrance>(blank());
   let entries = $state<Fragrance[]>([]);
   let step = $state(0);
   let view = $state<'form' | 'library' | 'notes' | 'detail'>('form');
+  let activeShelf = $state<'Collection' | 'Wishlist' | 'Empties'>('Collection');
+  let sidebarCollapsed = $state(false);
+  let mobileSidebarOpen = $state(false);
   let selectedId = $state<number | null>(null);
   let noteImages = $state<NoteImage[]>([]);
   let noteSearch = $state('');
@@ -49,7 +52,7 @@
   const allNotes = $derived(noteImages.map((note) => note.name).sort((a, b) => a.localeCompare(b)));
   const visibleNotes = $derived(allNotes.filter((note) => note.toLocaleLowerCase().includes(noteSearch.toLocaleLowerCase())));
   const selectedFragrance = $derived(entries.find((item) => item.id === selectedId));
-  const visibleEntries = $derived(entries.filter((item) => `${item.name} ${item.brand} ${item.collection}`.toLowerCase().includes(search.toLowerCase())));
+  const visibleEntries = $derived(entries.filter((item) => item.shelf === activeShelf && `${item.name} ${item.brand} ${item.collection}`.toLowerCase().includes(search.toLowerCase())));
 
   onMount(async () => {
     try { entries = await backend.listFragrances();
@@ -239,22 +242,24 @@
     }
     if (step < 2) step += 1;
   }
+  function showShelf(shelf: 'Collection' | 'Wishlist' | 'Empties') { activeShelf = shelf; view = 'library'; error = ''; success = ''; mobileSidebarOpen = false; }
   function startNew() {
-    fragrance = blank();
+    fragrance = { ...blank(), shelf: activeShelf };
+    mobileSidebarOpen = false;
     noteInputs = { topNotes: '', heartNotes: '', baseNotes: '' };
     activeNoteInput = null;
     duplicateNoteLayer = null;
     step = 0; view = 'form'; error = ''; success = '';
   }
   function openDetail(item: Fragrance) {
-    selectedId = item.id ?? null; view = 'detail'; error = ''; success = '';
+    selectedId = item.id ?? null; activeShelf = item.shelf; view = 'detail'; error = ''; success = '';
   }
   function startEdit(item: Fragrance) {
     fragrance = { ...item, topNotes: [...item.topNotes], heartNotes: [...item.heartNotes], baseNotes: [...item.baseNotes] };
     noteInputs = { topNotes: '', heartNotes: '', baseNotes: '' };
     activeNoteInput = null;
     duplicateNoteLayer = null;
-    step = 0; view = 'form'; error = ''; success = '';
+    step = 0; view = 'form'; error = ''; success = ''; mobileSidebarOpen = false;
   }
   async function remove(item: Fragrance) {
     if (item.id === undefined || !window.confirm(`Are you sure you want to delete "${item.name}"?`)) return;
@@ -276,7 +281,7 @@
       else await backend.updateFragrance(fragrance);
       await refreshNotesAndFragrances();
       const wasEditing = fragrance.id !== undefined;
-      fragrance = blank(); noteInputs = { topNotes: '', heartNotes: '', baseNotes: '' };
+      const savedShelf = fragrance.shelf; fragrance = blank(); activeShelf = savedShelf; noteInputs = { topNotes: '', heartNotes: '', baseNotes: '' };
       step = 0; view = 'library'; success = wasEditing ? 'Fragrance updated.' : 'Fragrance saved to your collection.';
     } catch (e) { error = String(e); }
     finally { saving = false; }
@@ -288,18 +293,21 @@
   <meta name="description" content="A personal fragrance catalogue" />
 </svelte:head>
 
-<div class="app-shell">
-  <aside class="sidebar">
+<div class="app-shell" class:sidebar-collapsed={sidebarCollapsed} class:mobile-sidebar-open={mobileSidebarOpen}>
+  <aside class="sidebar" aria-label="Main navigation">
+    <button class="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!sidebarCollapsed} onclick={() => sidebarCollapsed = !sidebarCollapsed}>{sidebarCollapsed ? "→" : "←"}</button>
     <div class="brand-mark"><span class="brand-icon">✳</span><span>Scentkeep<small>THE FRAGRANCE JOURNAL</small></span></div>
     <div class="sidebar-label">WORKSPACE</div>
-    <button class:active={view === 'library'} class="nav-link" onclick={() => { view = 'library'; error = ''; }}><span>▦</span> My collection <em>{entries.length}</em></button>
-    <button class:active={view === 'form'} class="nav-link" onclick={startNew}><span>＋</span> Add fragrance</button>
-    <button class:active={view === 'notes'} class="nav-link" onclick={() => { view = 'notes'; error = ''; success = ''; }}><span>◈</span> Perfume notes <em>{allNotes.length}</em></button>
+    {#each ['Collection', 'Wishlist', 'Empties'] as shelf}
+      <button title={shelf} class:active={view === 'library' && activeShelf === shelf} class="nav-link" onclick={() => showShelf(shelf as typeof activeShelf)}><span>{shelf === 'Collection' ? '▦' : shelf === 'Wishlist' ? '♡' : '◌'}</span><span class="nav-text">{shelf}</span><em>{entries.filter((item) => item.shelf === shelf).length}</em></button>
+    {/each}
+    <button title="Add fragrance" class:active={view === 'form'} class="nav-link" onclick={startNew}><span>＋</span><span class="nav-text">Add fragrance</span></button>
+    <button title="Perfume notes" class:active={view === 'notes'} class="nav-link" onclick={() => { view = 'notes'; error = ''; success = ''; mobileSidebarOpen = false; }}><span>◈</span><span class="nav-text">Perfume notes</span><em>{allNotes.length}</em></button>
     <div class="side-bottom"><div class="side-orb">✦</div><strong>Your scent story starts here.</strong><p>Keep every note, memory and discovery in one beautiful place.</p></div>
   </aside>
 
   <main>
-    <header class="topbar"><div class="breadcrumb">Collection <span>/</span> {view === 'form' ? (fragrance.id === undefined ? 'Add fragrance' : 'Edit fragrance') : view === 'notes' ? 'Perfume notes' : view === 'detail' ? (selectedFragrance?.name ?? 'Fragrance') : 'All fragrances'}</div><div class="top-actions"><button class="update-check" onclick={() => checkForUpdates()} disabled={checkingUpdate || installingUpdate}>{checkingUpdate ? 'Checking…' : 'Check for updates'}</button><span class="local-badge"><span></span> Saved locally</span><div class="avatar">S</div></div></header>
+    <header class="topbar"><button class="mobile-menu" type="button" aria-label="Toggle navigation" aria-expanded={mobileSidebarOpen} onclick={() => mobileSidebarOpen = !mobileSidebarOpen}>☰</button><nav class="breadcrumb" aria-label="Breadcrumb"><button onclick={() => showShelf('Collection')}>Collection</button>{#if view === 'detail' || view === 'form'}<span>/</span><button onclick={() => showShelf(view === 'detail' ? (selectedFragrance?.shelf ?? 'Collection') : fragrance.shelf)}>{view === 'detail' ? selectedFragrance?.shelf : fragrance.shelf}</button><span>/</span>{/if}<span aria-current="page">{view === 'form' ? (fragrance.id === undefined ? 'Add fragrance' : 'Edit fragrance') : view === 'notes' ? 'Perfume notes' : view === 'detail' ? (selectedFragrance?.name ?? 'Fragrance') : activeShelf}</span></nav><div class="top-actions"><button class="update-check" onclick={() => checkForUpdates()} disabled={checkingUpdate || installingUpdate}>{checkingUpdate ? 'Checking…' : 'Check for updates'}</button><span class="local-badge"><span></span> Saved locally</span><div class="avatar">S</div></div></header>
     {#if updateMessage}
       <div class="update-notice" role="status"><span>{updateMessage}</span>{#if availableUpdate && !installingUpdate}{#if canInstallUpdate}<button onclick={installUpdate}>Update and restart</button>{:else}<button onclick={() => openUrl('https://github.com/reaperhound/scentkeep/releases/latest')}>Open release page</button>{/if}{/if}</div>
     {/if}
@@ -312,7 +320,7 @@
           {#if step === 0}
             <div class="card-heading"><span class="card-icon">✦</span><div><h2>The essentials</h2><p>Start with the fragrance’s identity.</p></div></div>
             <div class="form-grid"><label class="field wide">Fragrance name <b>*</b><input placeholder="e.g. Odéon Sunset" bind:value={fragrance.name} /></label><label class="field">Brand / house <b>*</b><input placeholder="e.g. Memo Paris" bind:value={fragrance.brand} /></label><label class="field">Collection <span>Optional</span><input placeholder="e.g. Fleurs Bohèmes" bind:value={fragrance.collection} /></label><label class="field">Release year<input type="number" min="1800" max="2100" bind:value={fragrance.year} /></label><label class="field">Perfumer <span>Optional</span><input placeholder="e.g. Aliénor Massenet" bind:value={fragrance.perfumer} /></label></div>
-            <div class="section-divider"></div><div class="field-title">Who is this fragrance for?</div><div class="choice-grid">{#each categories as category}<button type="button" class:selected={fragrance.audience === category.value} onclick={() => fragrance.audience = category.value}><span class="choice-icon">{category.icon}</span><strong>{category.label}</strong><span class="radio-dot"></span></button>{/each}</div>
+            <div class="section-divider"></div><label class="field">Category<select bind:value={fragrance.shelf}><option>Collection</option><option>Wishlist</option><option>Empties</option></select></label><div class="field-title">Who is this fragrance for?</div><div class="choice-grid">{#each categories as category}<button type="button" class:selected={fragrance.audience === category.value} onclick={() => fragrance.audience = category.value}><span class="choice-icon">{category.icon}</span><strong>{category.label}</strong><span class="radio-dot"></span></button>{/each}</div>
           {:else if step === 1}
             <div class="card-heading"><span class="card-icon">◈</span><div><h2>Fragrance pyramid</h2><p>Build the scent, layer by layer. Add each note separately.</p></div></div>
             {#each [{ key: 'topNotes', title: 'Top notes', hint: 'The first impression', icon: '✧', example: 'Candied apple' }, { key: 'heartNotes', title: 'Heart notes', hint: 'The heart of the scent', icon: '❀', example: 'Caramel' }, { key: 'baseNotes', title: 'Base notes', hint: 'The lasting impression', icon: '◆', example: 'Sandalwood' }] as group}
@@ -365,7 +373,7 @@
             <div class="card-heading"><span class="card-icon">☷</span><div><h2>Finishing touches</h2><p>Add context and a little more character.</p></div></div>
             <label class="field">Description <span>Optional</span><textarea rows="5" placeholder="What makes this fragrance special?" bind:value={fragrance.description}></textarea></label>
             <div class="form-grid details"><label class="field">Bottle rating <span>0–10</span><input type="number" min="0" max="10" step="0.1" placeholder="e.g. 7.6" bind:value={fragrance.bottleRating} /></label><label class="field">Number of ratings <span>Optional</span><input type="number" min="0" placeholder="e.g. 5" bind:value={fragrance.ratingCount} /></label></div>
-            <label class="field">Image URL <span>Optional</span><input type="url" placeholder="https://example.com/fragrance.jpg" bind:value={fragrance.imageUrl} /><small>A link to the bottle image. Leave blank to use a placeholder.</small></label>
+            <div class="form-grid details"><label class="field">Bottles owned<input type="number" min="0" step="1" bind:value={fragrance.bottlesOwned} /></label><label class="field">Bottles finished<input type="number" min="0" step="1" bind:value={fragrance.bottlesFinished} /></label><label class="field">Price bought <span>Optional</span><input type="number" min="0" step="0.01" bind:value={fragrance.priceBought} /></label>{#if fragrance.shelf === 'Wishlist'}<label class="field">Current price <span>Optional</span><input type="number" min="0" step="0.01" bind:value={fragrance.currentPrice} /></label>{/if}</div><label class="favourite-field"><input type="checkbox" bind:checked={fragrance.favourite} /> Favourite</label><label class="field">Image URL <span>Optional</span><input type="url" placeholder="https://example.com/fragrance.jpg" bind:value={fragrance.imageUrl} /><small>A link to the bottle image. Leave blank to use a placeholder.</small></label>
             <div class="summary"><div class="summary-icon">✦</div><div><strong>Ready for your collection</strong><p>{fragrance.name || 'Your fragrance'} by {fragrance.brand || 'your chosen house'} · {fragrance.year} · {fragrance.audience}</p></div></div>
           {/if}
         </div>
@@ -376,7 +384,7 @@
         <button class="detail-back" onclick={() => view = 'library'}>← Back to collection</button>
         <div class="detail-layout">
           <div class="detail-left"><div class="detail-image">{#if selectedFragrance.imageUrl}<img src={selectedFragrance.imageUrl} alt={selectedFragrance.name} />{:else}<div class="detail-placeholder"><span>✳</span><small>NO BOTTLE IMAGE</small></div>{/if}</div><div class="detail-image-caption">{selectedFragrance.brand} · {selectedFragrance.year}</div><button class="detail-edit" onclick={() => startEdit(selectedFragrance)}>✎ Edit fragrance</button></div>
-          <div class="detail-main"><div class="detail-kicker">{selectedFragrance.collection || 'FRAGRANCE COLLECTION'}</div><h1>{selectedFragrance.name}<span class="heading-dot">.</span></h1><div class="detail-brand">{selectedFragrance.brand}<span class="year-pill">{selectedFragrance.year}</span></div><div class="audience-pill">{selectedFragrance.audience}</div>{#if selectedFragrance.description}<p class="detail-description">{selectedFragrance.description}</p>{/if}
+          <div class="detail-main"><div class="detail-kicker">{selectedFragrance.collection || 'FRAGRANCE COLLECTION'}</div><h1>{selectedFragrance.name}<span class="heading-dot">.</span></h1><div class="detail-brand">{selectedFragrance.brand}<span class="year-pill">{selectedFragrance.year}</span></div><div class="audience-pill">{selectedFragrance.audience}</div><div class="ownership-summary"><span>{selectedFragrance.shelf}</span><span>Owned: {selectedFragrance.bottlesOwned}</span><span>Finished: {selectedFragrance.bottlesFinished}</span>{#if selectedFragrance.favourite}<span>★ Favourite</span>{/if}{#if selectedFragrance.priceBought !== null}<span>Price bought: {selectedFragrance.priceBought.toFixed(2)}</span>{/if}{#if selectedFragrance.shelf === 'Wishlist' && selectedFragrance.currentPrice !== null}<span>Current price: {selectedFragrance.currentPrice.toFixed(2)}</span>{/if}</div>{#if selectedFragrance.description}<p class="detail-description">{selectedFragrance.description}</p>{/if}
             <section class="detail-section"><div class="detail-section-title"><span>◈</span><h2>Fragrance pyramid</h2></div>
               {#each [{ title: 'Top notes', notes: selectedFragrance.topNotes, icon: '✧' }, { title: 'Heart notes', notes: selectedFragrance.heartNotes, icon: '❀' }, { title: 'Base notes', notes: selectedFragrance.baseNotes, icon: '◆' }] as group}
                 <div class="pyramid-row"><div class="pyramid-label"><span>{group.icon}</span>{group.title}</div><div class="pyramid-notes">{#each group.notes as note}<div class="pyramid-note"><div class="pyramid-note-image">{#if imageFor(note)}<img src={imageFor(note)} alt="" />{:else}<span>✦</span>{/if}</div><span>{note}</span></div>{/each}{#if group.notes.length === 0}<span class="no-notes">No notes recorded</span>{/if}</div></div>
@@ -402,9 +410,9 @@
         {/if}
       </div>
     {:else}
-      <div class="page-content"><div class="heading"><div><div class="eyebrow">YOUR FRAGRANCE LIBRARY</div><h1>My collection<span class="heading-dot">.</span></h1><p>A home for every scent worth remembering.</p></div>
+      <div class="page-content"><div class="heading"><div><div class="eyebrow">YOUR FRAGRANCE LIBRARY</div><h1>{activeShelf}<span class="heading-dot">.</span></h1><p>A home for every scent worth remembering.</p></div>
           <div class="csv-actions"><button class="back-button" disabled={csvBusy} onclick={() => fragranceCsvInput?.click()}>Import CSV</button><button class="back-button" disabled={csvBusy} onclick={() => exportCsv('fragrances')}>Export CSV</button><button class="primary-button" onclick={startNew}>+ Add fragrance</button><input type="file" accept=".csv,.xlsx,.xls,text/csv" bind:this={fragranceCsvInput} onchange={(event) => importCsv(event, 'fragrances')} hidden /></div>
-        </div>{#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error">{error}</div>{/if}{#if csvReport?.kind === 'fragrances'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'fragrance' : 'fragrances'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'fragrance' : 'fragrances'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}<div class="library-toolbar"><div class="search-box">⌕ <input aria-label="Search fragrances" placeholder="Search fragrances or brands..." bind:value={search} /></div><span>{visibleEntries.length} {visibleEntries.length === 1 ? 'fragrance' : 'fragrances'}</span></div>{#if visibleEntries.length === 0}<div class="empty-state"><div>✳</div><h2>{entries.length === 0 ? 'Your collection is waiting' : 'No fragrances found'}</h2><p>{entries.length === 0 ? 'Add your first fragrance to start your scent journal.' : 'Try another search term.'}</p>{#if entries.length === 0}<button class="primary-button" onclick={startNew}>Add your first fragrance →</button>{/if}</div>{:else}<div class="fragrance-grid">{#each visibleEntries as item}<article class="fragrance-card"><div class="fragrance-art">{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<span>✳</span>{/if}</div><div class="fragrance-info"><div class="fragrance-kicker">{item.collection || item.audience} · {item.year}</div><h2>{item.name}</h2><p>{item.brand}</p><div class="mini-notes">{#each [...item.topNotes, ...item.heartNotes, ...item.baseNotes].slice(0, 3) as note}<span>{note}</span>{/each}</div>{#if item.bottleRating !== null}<div class="rating">★ {item.bottleRating.toFixed(1)} <span>Bottle rating</span></div>{/if}</div><div class="card-actions"><button type="button" class="view-action" onclick={() => openDetail(item)}>View details →</button><button type="button" class="edit-action" onclick={() => startEdit(item)}>✎ Edit</button><button type="button" class="delete-action" onclick={() => remove(item)}>Delete</button></div></article>{/each}</div>{/if}</div>
+        </div>{#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error">{error}</div>{/if}{#if csvReport?.kind === 'fragrances'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'fragrance' : 'fragrances'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'fragrance' : 'fragrances'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}<div class="library-toolbar"><div class="search-box">⌕ <input aria-label="Search fragrances" placeholder="Search fragrances or brands..." bind:value={search} /></div><span>{visibleEntries.length} {visibleEntries.length === 1 ? 'fragrance' : 'fragrances'}</span></div>{#if visibleEntries.length === 0}<div class="empty-state"><div>✳</div><h2>{entries.length === 0 ? 'Your collection is waiting' : 'No fragrances found'}</h2><p>{entries.length === 0 ? 'Add your first fragrance to start your scent journal.' : 'Try another search term.'}</p>{#if entries.length === 0}<button class="primary-button" onclick={startNew}>Add your first fragrance →</button>{/if}</div>{:else}<div class="fragrance-grid">{#each visibleEntries as item}<article class="fragrance-card"><div class="fragrance-art">{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<span>✳</span>{/if}</div><div class="fragrance-info"><div class="fragrance-kicker">{item.favourite ? "★ " : ""}{item.collection || item.audience} · {item.year}</div><h2>{item.name}</h2><p>{item.brand}</p><div class="bottle-counts">Owned {item.bottlesOwned} · Finished {item.bottlesFinished}{#if item.shelf === "Wishlist" && item.currentPrice !== null} · Current price {item.currentPrice.toFixed(2)}{/if}</div><div class="mini-notes">{#each [...item.topNotes, ...item.heartNotes, ...item.baseNotes].slice(0, 3) as note}<span>{note}</span>{/each}</div>{#if item.bottleRating !== null}<div class="rating">★ {item.bottleRating.toFixed(1)} <span>Bottle rating</span></div>{/if}</div><div class="card-actions"><button type="button" class="view-action" onclick={() => openDetail(item)}>View details →</button><button type="button" class="edit-action" onclick={() => startEdit(item)}>✎ Edit</button><button type="button" class="delete-action" onclick={() => remove(item)}>Delete</button></div></article>{/each}</div>{/if}</div>
     {/if}
   </main>
 </div>
@@ -428,6 +436,9 @@
   .import-result{background:#eaf4ff;color:#345577}
   .import-result p{margin:8px 0 4px}
   .import-result ul{margin:0;padding-left:20px;max-height:160px;overflow:auto}
+  .sidebar-toggle{align-self:flex-end;border:0;background:#eef5ff;color:#397bc6;border-radius:7px;padding:6px 10px;margin-bottom:12px}.sidebar-collapsed .sidebar{width:68px;padding-left:8px;padding-right:8px}.sidebar-collapsed .brand-mark>span:last-child,.sidebar-collapsed .sidebar-label,.sidebar-collapsed .nav-text,.sidebar-collapsed .nav-link em,.sidebar-collapsed .side-bottom{display:none}.sidebar-collapsed .nav-link{justify-content:center;padding:12px}.breadcrumb{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.breadcrumb button{border:0;background:none;color:#4b8fdc;padding:0;font-size:inherit}.breadcrumb [aria-current="page"]{overflow:hidden;text-overflow:ellipsis}.mobile-menu{display:none;border:0;background:none;color:#347fcf;font-size:22px}.ownership-summary{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0}.ownership-summary span{background:#eaf4ff;border-radius:20px;padding:6px 10px;color:#467db3;font-size:12px}.bottle-counts{font-size:11px;color:#7693b0;margin-top:10px}.favourite-field{display:flex;align-items:center;gap:8px;margin:14px 0;font-weight:700}.field select{width:100%;padding:12px;border:1px solid #dce8f5;border-radius:7px;background:white}
+  @media(max-width:800px){.sidebar{width:68px!important;padding:20px 8px!important}.sidebar .brand-mark>span:last-child,.sidebar .sidebar-label,.sidebar .nav-text,.sidebar .nav-link em,.sidebar .side-bottom{display:none}.sidebar .nav-link{font-size:14px!important;justify-content:center}.sidebar .nav-link>span:first-child{font-size:21px}.top-actions .local-badge,.top-actions .avatar{display:none}}
+  @media(max-width:550px){.sidebar{display:flex!important;position:fixed;top:0;bottom:0;left:0;z-index:50;transform:translateX(-100%);transition:transform .2s;width:240px!important;padding:20px!important;box-shadow:10px 0 30px #193a5b20}.mobile-sidebar-open .sidebar{transform:translateX(0)}.mobile-sidebar-open .sidebar .brand-mark>span:last-child,.mobile-sidebar-open .sidebar .sidebar-label,.mobile-sidebar-open .sidebar .nav-text,.mobile-sidebar-open .sidebar .nav-link em{display:block}.mobile-sidebar-open .sidebar .nav-link{justify-content:flex-start}.mobile-menu{display:block}.topbar{gap:8px;padding:0 12px}.top-actions{margin-left:auto}.update-check{font-size:0!important;padding:7px!important}.update-check:after{content:'↻';font-size:17px}.search-box{width:min(100%,300px)}.library-toolbar{flex-wrap:wrap}.note-entry{flex-wrap:wrap}.note-entry>button{width:100%}.new-note-form{flex-wrap:wrap}.new-note-form button{min-height:40px}.fragrance-grid,.notes-grid{grid-template-columns:1fr}.page-content{padding:24px 15px}.detail-layout{grid-template-columns:minmax(0,1fr)}}
   @media(max-width:700px){.heading{align-items:start;flex-direction:column}.csv-actions{justify-content:flex-start}}
   .update-check{border:1px solid #d6e5f4;border-radius:7px;background:#fff;color:#3d81ca;padding:8px 12px;font-size:11px;font-weight:700;cursor:pointer}
   .update-check:disabled{opacity:.6;cursor:wait}

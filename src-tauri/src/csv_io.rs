@@ -1,7 +1,7 @@
 use super::*;
 use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 
-const FRAGRANCE_HEADERS: [&str; 13] = [
+const FRAGRANCE_HEADERS: [&str; 19] = [
     "collection",
     "name",
     "brand",
@@ -15,6 +15,12 @@ const FRAGRANCE_HEADERS: [&str; 13] = [
     "bottle_rating",
     "rating_count",
     "image_url",
+    "shelf",
+    "bottles_owned",
+    "bottles_finished",
+    "favourite",
+    "price_bought",
+    "current_price",
 ];
 const NOTE_HEADERS: [&str; 2] = ["name", "image_url"];
 
@@ -40,6 +46,18 @@ struct FragranceRow {
     bottle_rating: Option<f64>,
     rating_count: Option<i32>,
     image_url: String,
+    #[serde(default = "default_shelf")]
+    shelf: String,
+    #[serde(default)]
+    bottles_owned: i32,
+    #[serde(default)]
+    bottles_finished: i32,
+    #[serde(default)]
+    favourite: bool,
+    #[serde(default)]
+    price_bought: Option<f64>,
+    #[serde(default)]
+    current_price: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -75,6 +93,7 @@ impl TryFrom<FragranceRow> for Fragrance {
             bottle_rating: row.bottle_rating,
             rating_count: row.rating_count,
             image_url: row.image_url,
+            shelf: row.shelf, bottles_owned: row.bottles_owned, bottles_finished: row.bottles_finished, favourite: row.favourite, price_bought: row.price_bought, current_price: row.current_price,
         })
     }
 }
@@ -124,6 +143,7 @@ fn fragrance_csv(conn: &Connection) -> Result<String, String> {
                 bottle_rating: fragrance.bottle_rating,
                 rating_count: fragrance.rating_count,
                 image_url: fragrance.image_url,
+                shelf: fragrance.shelf, bottles_owned: fragrance.bottles_owned, bottles_finished: fragrance.bottles_finished, favourite: fragrance.favourite, price_bought: fragrance.price_bought, current_price: fragrance.current_price,
             })
             .map_err(|e| e.to_string())?;
     }
@@ -136,7 +156,8 @@ fn import_fragrances(conn: &mut Connection, content: &str) -> Result<ImportRepor
         .headers()
         .map_err(|e| format!("Invalid CSV header: {e}"))?
         .clone();
-    validate_headers(&headers, &FRAGRANCE_HEADERS)?;
+    if headers.len() == 13 { validate_headers(&headers, &FRAGRANCE_HEADERS[..13])?; }
+    else { validate_headers(&headers, &FRAGRANCE_HEADERS)?; }
     let mut incoming = Vec::new();
     for (index, row) in reader.deserialize::<FragranceRow>().enumerate() {
         let row = row.map_err(|e| format!("CSV row {} is invalid: {e}", index + 2))?;
@@ -305,7 +326,10 @@ mod tests {
         conn.execute_batch("CREATE TABLE fragrances (
             id INTEGER PRIMARY KEY, collection TEXT, name TEXT, brand TEXT, year INTEGER,
             audience TEXT, description TEXT, top_notes TEXT, heart_notes TEXT, base_notes TEXT,
-            perfumer TEXT, bottle_rating REAL, rating_count INTEGER, image_url TEXT
+            perfumer TEXT, bottle_rating REAL, rating_count INTEGER, image_url TEXT,
+            shelf TEXT NOT NULL DEFAULT 'Collection', bottles_owned INTEGER NOT NULL DEFAULT 0,
+            bottles_finished INTEGER NOT NULL DEFAULT 0, favourite INTEGER NOT NULL DEFAULT 0,
+            price_bought REAL, current_price REAL
         ); CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL);").unwrap();
         conn
     }
@@ -314,9 +338,9 @@ mod tests {
     fn fragrance_csv_round_trip_and_duplicate_report() {
         let mut conn = test_db();
         let content = concat!(
-            "collection,name,brand,year,audience,description,top_notes,heart_notes,base_notes,perfumer,bottle_rating,rating_count,image_url\n",
-            "Fresh,Rose Garden,Maison,2024,Unisex,Floral,\"[\"\"Rose\"\"]\",[],[],Alex,8.5,2,\n",
-            "Fresh, rose garden ,MAISON,2024,Unisex,Floral,[],[],[],Alex,,,\n"
+            "collection,name,brand,year,audience,description,top_notes,heart_notes,base_notes,perfumer,bottle_rating,rating_count,image_url,shelf,bottles_owned,bottles_finished,favourite,price_bought,current_price\n",
+            "Fresh,Rose Garden,Maison,2024,Unisex,Floral,\"[\"\"Rose\"\"]\",[],[],Alex,8.5,2,,Collection,1,0,false,50,\n",
+            "Fresh, rose garden ,MAISON,2024,Unisex,Floral,[],[],[],Alex,,,,Collection,0,0,false,,\n"
         );
         let report = import_fragrances(&mut conn, content).unwrap();
         assert_eq!(report.imported, 1);
@@ -340,9 +364,9 @@ mod tests {
                 .contains("Unsupported CSV columns")
         );
         let content = concat!(
-            "collection,name,brand,year,audience,description,top_notes,heart_notes,base_notes,perfumer,bottle_rating,rating_count,image_url\n",
-            "Fresh,Rose,Maison,2024,Unisex,,[],[],[],,,,\n",
-            "Fresh,Jasmine,Maison,invalid,Unisex,,[],[],[],,,,\n"
+            "collection,name,brand,year,audience,description,top_notes,heart_notes,base_notes,perfumer,bottle_rating,rating_count,image_url,shelf,bottles_owned,bottles_finished,favourite,price_bought,current_price\n",
+            "Fresh,Rose,Maison,2024,Unisex,,[],[],[],,,,,Collection,0,0,false,,\n",
+            "Fresh,Jasmine,Maison,invalid,Unisex,,[],[],[],,,,,Collection,0,0,false,,\n"
         );
         assert!(
             import_fragrances(&mut conn, content)

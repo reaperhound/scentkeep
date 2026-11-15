@@ -22,7 +22,21 @@ struct Fragrance {
     bottle_rating: Option<f64>,
     rating_count: Option<i32>,
     image_url: String,
+    #[serde(default = "default_shelf")]
+    shelf: String,
+    #[serde(default)]
+    bottles_owned: i32,
+    #[serde(default)]
+    bottles_finished: i32,
+    #[serde(default)]
+    favourite: bool,
+    #[serde(default)]
+    price_bought: Option<f64>,
+    #[serde(default)]
+    current_price: Option<f64>,
 }
+
+fn default_shelf() -> String { "Collection".into() }
 
 fn database(app: &tauri::AppHandle) -> Result<Connection, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -43,12 +57,30 @@ fn database(app: &tauri::AppHandle) -> Result<Connection, String> {
         bottle_rating REAL,
         rating_count INTEGER,
         image_url TEXT NOT NULL,
+        shelf TEXT NOT NULL DEFAULT 'Collection',
+        bottles_owned INTEGER NOT NULL DEFAULT 0,
+        bottles_finished INTEGER NOT NULL DEFAULT 0,
+        favourite INTEGER NOT NULL DEFAULT 0,
+        price_bought REAL,
+        current_price REAL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS note_images (
         name TEXT PRIMARY KEY COLLATE NOCASE,
         image_data_url TEXT NOT NULL
     );").map_err(|e| e.to_string())?;
+    let columns = [
+        ("shelf", "TEXT NOT NULL DEFAULT 'Collection'"),
+        ("bottles_owned", "INTEGER NOT NULL DEFAULT 0"),
+        ("bottles_finished", "INTEGER NOT NULL DEFAULT 0"),
+        ("favourite", "INTEGER NOT NULL DEFAULT 0"),
+        ("price_bought", "REAL"),
+        ("current_price", "REAL"),
+    ];
+    for (name, definition) in columns {
+        let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('fragrances') WHERE name = ?1)", [name], |row| row.get(0)).map_err(|e| e.to_string())?;
+        if !exists { conn.execute(&format!("ALTER TABLE fragrances ADD COLUMN {name} {definition}"), []).map_err(|e| e.to_string())?; }
+    }
     Ok(conn)
 }
 
@@ -65,6 +97,9 @@ fn validate_fragrance(fragrance: &Fragrance) -> Result<(), String> {
     if fragrance.rating_count.is_some_and(|count| count < 0) {
         return Err("Rating count cannot be negative".into());
     }
+    if !["Collection", "Wishlist", "Empties"].contains(&fragrance.shelf.as_str()) { return Err("Choose a valid category".into()); }
+    if fragrance.bottles_owned < 0 || fragrance.bottles_finished < 0 { return Err("Bottle counts cannot be negative".into()); }
+    if [fragrance.price_bought, fragrance.current_price].iter().flatten().any(|price| !price.is_finite() || *price < 0.0) { return Err("Prices must be nonnegative numbers".into()); }
     if !fragrance.image_url.trim().is_empty() {
         validate_image_url(&fragrance.image_url)?;
     }
@@ -107,14 +142,14 @@ fn save_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<i64, St
 }
 
 fn insert_fragrance(conn: &Connection, fragrance: &Fragrance) -> Result<(), String> {
-    conn.execute("INSERT INTO fragrances (collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)", params![
+    conn.execute("INSERT INTO fragrances (collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url, shelf, bottles_owned, bottles_finished, favourite, price_bought, current_price)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)", params![
         fragrance.collection.trim(), fragrance.name.trim(), fragrance.brand.trim(), fragrance.year,
         fragrance.audience, fragrance.description.trim(),
         serde_json::to_string(&fragrance.top_notes).map_err(|e| e.to_string())?,
         serde_json::to_string(&fragrance.heart_notes).map_err(|e| e.to_string())?,
         serde_json::to_string(&fragrance.base_notes).map_err(|e| e.to_string())?,
-        fragrance.perfumer.trim(), fragrance.bottle_rating, fragrance.rating_count, fragrance.image_url.trim()
+        fragrance.perfumer.trim(), fragrance.bottle_rating, fragrance.rating_count, fragrance.image_url.trim(), fragrance.shelf, fragrance.bottles_owned, fragrance.bottles_finished, fragrance.favourite, fragrance.price_bought, fragrance.current_price
     ]).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -126,13 +161,13 @@ fn update_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<(), S
     let mut conn = database(&app)?;
     let transaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     ensure_unique_fragrance(&transaction, &fragrance, Some(id))?;
-    let changed = transaction.execute("UPDATE fragrances SET collection = ?1, name = ?2, brand = ?3, year = ?4, audience = ?5, description = ?6, top_notes = ?7, heart_notes = ?8, base_notes = ?9, perfumer = ?10, bottle_rating = ?11, rating_count = ?12, image_url = ?13 WHERE id = ?14", params![
+    let changed = transaction.execute("UPDATE fragrances SET collection = ?1, name = ?2, brand = ?3, year = ?4, audience = ?5, description = ?6, top_notes = ?7, heart_notes = ?8, base_notes = ?9, perfumer = ?10, bottle_rating = ?11, rating_count = ?12, image_url = ?13, shelf = ?14, bottles_owned = ?15, bottles_finished = ?16, favourite = ?17, price_bought = ?18, current_price = ?19 WHERE id = ?20", params![
         fragrance.collection.trim(), fragrance.name.trim(), fragrance.brand.trim(), fragrance.year,
         fragrance.audience, fragrance.description.trim(),
         serde_json::to_string(&fragrance.top_notes).map_err(|e| e.to_string())?,
         serde_json::to_string(&fragrance.heart_notes).map_err(|e| e.to_string())?,
         serde_json::to_string(&fragrance.base_notes).map_err(|e| e.to_string())?,
-        fragrance.perfumer.trim(), fragrance.bottle_rating, fragrance.rating_count, fragrance.image_url.trim(), id
+        fragrance.perfumer.trim(), fragrance.bottle_rating, fragrance.rating_count, fragrance.image_url.trim(), fragrance.shelf, fragrance.bottles_owned, fragrance.bottles_finished, fragrance.favourite, fragrance.price_bought, fragrance.current_price, id
     ]).map_err(|e| e.to_string())?;
     if changed == 0 { return Err("Fragrance not found".into()); }
     transaction.commit().map_err(|e| e.to_string())
@@ -153,7 +188,7 @@ fn list_fragrances(app: tauri::AppHandle) -> Result<Vec<Fragrance>, String> {
 }
 
 fn load_fragrances(conn: &Connection) -> Result<Vec<Fragrance>, String> {
-    let mut statement = conn.prepare("SELECT id, collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url FROM fragrances ORDER BY id DESC").map_err(|e| e.to_string())?;
+    let mut statement = conn.prepare("SELECT id, collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url, shelf, bottles_owned, bottles_finished, favourite, price_bought, current_price FROM fragrances ORDER BY id DESC").map_err(|e| e.to_string())?;
     let rows = statement.query_map([], |row| {
         let top: String = row.get(7)?;
         let heart: String = row.get(8)?;
@@ -164,7 +199,7 @@ fn load_fragrances(conn: &Connection) -> Result<Vec<Fragrance>, String> {
             top_notes: serde_json::from_str(&top).unwrap_or_default(),
             heart_notes: serde_json::from_str(&heart).unwrap_or_default(),
             base_notes: serde_json::from_str(&base).unwrap_or_default(),
-            perfumer: row.get(10)?, bottle_rating: row.get(11)?, rating_count: row.get(12)?, image_url: row.get(13)?,
+            perfumer: row.get(10)?, bottle_rating: row.get(11)?, rating_count: row.get(12)?, image_url: row.get(13)?, shelf: row.get(14)?, bottles_owned: row.get(15)?, bottles_finished: row.get(16)?, favourite: row.get(17)?, price_bought: row.get(18)?, current_price: row.get(19)?,
         })
     }).map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
@@ -403,7 +438,7 @@ mod tests {
             id: None, collection: String::new(), name: " rose garden ".into(), brand: "MAISON SCENT".into(),
             year: 2024, audience: "Unisex".into(), description: String::new(), top_notes: vec![],
             heart_notes: vec![], base_notes: vec![], perfumer: String::new(), bottle_rating: None,
-            rating_count: None, image_url: String::new(),
+            rating_count: None, image_url: String::new(), shelf: default_shelf(), bottles_owned: 0, bottles_finished: 0, favourite: false, price_bought: None, current_price: None,
         };
 
         assert_eq!(ensure_unique_fragrance(&conn, &fragrance, None).unwrap_err(), "This fragrance is already in your collection");
