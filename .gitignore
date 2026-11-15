@@ -4,6 +4,7 @@ node_modules
 /.svelte-kit
 /package
 /src-tauri/target
+/graphify-out/
 .env
 .env.*
 !.env.example
