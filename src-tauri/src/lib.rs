@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use tauri::Manager;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -142,14 +143,20 @@ fn list_fragrances(app: tauri::AppHandle) -> Result<Vec<Fragrance>, String> {
 struct NoteImage {
     name: String,
     image_url: String,
+    usage_count: usize,
 }
 
 #[tauri::command]
 fn list_note_images(app: tauri::AppHandle) -> Result<Vec<NoteImage>, String> {
     let conn = database(&app)?;
+    load_note_images(&conn)
+}
+
+fn load_note_images(conn: &Connection) -> Result<Vec<NoteImage>, String> {
     // Existing fragrances predate the note catalogue. Bring their notes in without
     // replacing any images already assigned to those notes.
     let mut notes = Vec::new();
+    let mut usage_counts = HashMap::<String, usize>::new();
     {
         let mut fragrances = conn.prepare("SELECT top_notes, heart_notes, base_notes FROM fragrances")
             .map_err(|e| e.to_string())?;
@@ -157,9 +164,14 @@ fn list_note_images(app: tauri::AppHandle) -> Result<Vec<NoteImage>, String> {
             .map_err(|e| e.to_string())?;
         for row in rows {
             let (top, heart, base) = row.map_err(|e| e.to_string())?;
+            let mut used_in_fragrance = HashSet::new();
             for json in [top, heart, base] {
                 let values: Vec<String> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+                used_in_fragrance.extend(values.iter().map(|name| name.trim().to_lowercase()).filter(|name| !name.is_empty()));
                 notes.extend(values);
+            }
+            for name in used_in_fragrance {
+                *usage_counts.entry(name).or_default() += 1;
             }
         }
     }
@@ -171,9 +183,14 @@ fn list_note_images(app: tauri::AppHandle) -> Result<Vec<NoteImage>, String> {
     }
     let mut statement = conn.prepare("SELECT name, image_data_url FROM note_images")
         .map_err(|e| e.to_string())?;
-    let rows = statement.query_map([], |row| Ok(NoteImage {
-        name: row.get(0)?, image_url: row.get(1)?,
-    })).map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |row| {
+        let name: String = row.get(0)?;
+        Ok(NoteImage {
+            usage_count: *usage_counts.get(&name.to_lowercase()).unwrap_or(&0),
+            name,
+            image_url: row.get(1)?,
+        })
+    }).map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
 }
 
@@ -302,5 +319,19 @@ mod tests {
         assert!(validate_image_url("data:image/png;base64,abc").is_err());
         assert!(validate_image_url("file:///tmp/image.png").is_err());
         assert!(validate_image_url("not a link").is_err());
+    }
+
+    #[test]
+    fn note_usage_counts_each_fragrance_once() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE fragrances (top_notes TEXT, heart_notes TEXT, base_notes TEXT);
+            CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL);
+            INSERT INTO fragrances VALUES ('[\"Rose\",\"rose\"]', '[\"ROSE\"]', '[]');
+            INSERT INTO fragrances VALUES ('[\"Rose\"]', '[]', '[]');
+            INSERT INTO note_images VALUES ('Jasmine', '');").unwrap();
+
+        let notes = load_note_images(&conn).unwrap();
+        assert_eq!(notes.iter().find(|note| note.name == "Rose").unwrap().usage_count, 2);
+        assert_eq!(notes.iter().find(|note| note.name == "Jasmine").unwrap().usage_count, 0);
     }
 }

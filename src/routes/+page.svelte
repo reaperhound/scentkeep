@@ -1,14 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { backend, type Fragrance, type NoteImage } from '$lib/backend';
 
-  type Fragrance = {
-    id?: number; collection: string; name: string; brand: string; year: number;
-    audience: string; description: string; topNotes: string[]; heartNotes: string[];
-    baseNotes: string[]; perfumer: string; bottleRating: number | null;
-    ratingCount: number | null; imageUrl: string;
-  };
-  type NoteImage = { name: string; imageUrl: string };
   const blank = (): Fragrance => ({ collection: '', name: '', brand: '', year: new Date().getFullYear(), audience: 'Unisex', description: '', topNotes: [], heartNotes: [], baseNotes: [], perfumer: '', bottleRating: null, ratingCount: null, imageUrl: '' });
   let fragrance = $state<Fragrance>(blank());
   let entries = $state<Fragrance[]>([]);
@@ -39,20 +32,20 @@
   const visibleEntries = $derived(entries.filter((item) => `${item.name} ${item.brand} ${item.collection}`.toLowerCase().includes(search.toLowerCase())));
 
   onMount(async () => {
-    try { entries = await invoke<Fragrance[]>('list_fragrances');
-      noteImages = await invoke<NoteImage[]>('list_note_images'); }
+    try { entries = await backend.listFragrances();
+      noteImages = await backend.listNoteImages(); }
     catch (e) { error = String(e); }
   });
 
   async function refreshNotesAndFragrances() {
-    entries = await invoke<Fragrance[]>('list_fragrances');
-    noteImages = await invoke<NoteImage[]>('list_note_images');
+    entries = await backend.listFragrances();
+    noteImages = await backend.listNoteImages();
   }
   async function createNote() {
     error = ''; success = '';
     try {
-      await invoke('create_note', { name: newNoteName });
-      noteImages = await invoke<NoteImage[]>('list_note_images');
+      await backend.createNote(newNoteName);
+      noteImages = await backend.listNoteImages();
       success = `${newNoteName.trim()} added to your notes.`;
       newNoteName = '';
     } catch (e) { error = String(e); }
@@ -60,7 +53,7 @@
   async function renameNote(oldName: string) {
     error = ''; success = '';
     try {
-      await invoke('rename_note', { oldName, newName: editedNoteName });
+      await backend.renameNote(oldName, editedNoteName);
       await refreshNotesAndFragrances();
       success = `${oldName} renamed to ${editedNoteName.trim()}.`;
       editingNote = ''; editedNoteName = '';
@@ -70,7 +63,7 @@
     if (!window.confirm(`Are you sure you want to delete the note "${name}"? It will also be removed from all fragrances.`)) return;
     error = ''; success = '';
     try {
-      await invoke('delete_note', { name });
+      await backend.deleteNote(name);
       await refreshNotesAndFragrances();
       success = `${name} deleted from your notes and fragrances.`;
     } catch (e) { error = String(e); }
@@ -78,18 +71,13 @@
   function imageFor(note: string) {
     return noteImages.find((image) => image.name.toLocaleLowerCase() === note.toLocaleLowerCase())?.imageUrl;
   }
-  function isWebLink(value: string) {
-    try { return ['http:', 'https:'].includes(new URL(value.trim()).protocol); }
-    catch { return false; }
-  }
   async function setNoteImage(note: string) {
     const imageUrl = (noteImageDrafts[note] ?? '').trim();
     error = ''; success = '';
-    if (!isWebLink(imageUrl)) { error = 'Enter an image link starting with http:// or https://.'; return; }
     savingNoteImage = note;
     try {
-      await invoke('set_note_image', { name: note, imageUrl });
-      noteImages = await invoke<NoteImage[]>('list_note_images');
+      await backend.setNoteImage(note, imageUrl);
+      noteImages = await backend.listNoteImages();
       noteImageDrafts[note] = '';
       success = `Image link saved for ${note}.`;
     } catch (e) { error = String(e); }
@@ -98,15 +86,20 @@
   async function removeNoteImage(note: string) {
     error = ''; success = '';
     try {
-      await invoke('remove_note_image', { name: note });
-      noteImages = await invoke<NoteImage[]>('list_note_images');
+      await backend.removeNoteImage(note);
+      noteImages = await backend.listNoteImages();
       success = `Image removed from ${note}.`;
     } catch (e) { error = String(e); }
   }
   function addNote(kind: 'topNotes' | 'heartNotes' | 'baseNotes') {
     const value = noteInputs[kind].trim();
     if (!value) return;
-    fragrance[kind] = [...fragrance[kind], value];
+    const note = allNotes.find((name) => name.toLocaleLowerCase() === value.toLocaleLowerCase()) ?? value;
+    if (fragrance[kind].some((name) => name.toLocaleLowerCase() === note.toLocaleLowerCase())) {
+      noteInputs[kind] = '';
+      return;
+    }
+    fragrance[kind] = [...fragrance[kind], note];
     noteInputs[kind] = '';
   }
   function removeNote(kind: 'topNotes' | 'heartNotes' | 'baseNotes', index: number) {
@@ -138,8 +131,8 @@
     if (item.id === undefined || !window.confirm(`Are you sure you want to delete "${item.name}"?`)) return;
     error = ''; success = '';
     try {
-      await invoke('delete_fragrance', { id: item.id });
-      entries = entries.filter((entry) => entry.id !== item.id);
+      await backend.deleteFragrance(item.id);
+      await refreshNotesAndFragrances();
       success = `${item.name} was deleted.`;
     } catch (e) { error = String(e); }
   }
@@ -148,13 +141,10 @@
     if (!fragrance.name.trim() || !fragrance.brand.trim()) {
       error = 'A fragrance name and brand are required.'; step = 0; return;
     }
-    if (fragrance.imageUrl.trim() && !isWebLink(fragrance.imageUrl)) {
-      error = 'Enter a bottle image link starting with http:// or https://.'; step = 2; return;
-    }
     saving = true;
     try {
-      if (fragrance.id === undefined) await invoke<number>('save_fragrance', { fragrance });
-      else await invoke('update_fragrance', { fragrance });
+      if (fragrance.id === undefined) await backend.saveFragrance(fragrance);
+      else await backend.updateFragrance(fragrance);
       await refreshNotesAndFragrances();
       const wasEditing = fragrance.id !== undefined;
       fragrance = blank(); noteInputs = { topNotes: '', heartNotes: '', baseNotes: '' };
@@ -193,9 +183,10 @@
             <div class="section-divider"></div><div class="field-title">Who is this fragrance for?</div><div class="choice-grid">{#each categories as category}<button type="button" class:selected={fragrance.audience === category.value} onclick={() => fragrance.audience = category.value}><span class="choice-icon">{category.icon}</span><strong>{category.label}</strong><span class="radio-dot"></span></button>{/each}</div>
           {:else if step === 1}
             <div class="card-heading"><span class="card-icon">◈</span><div><h2>Fragrance pyramid</h2><p>Build the scent, layer by layer. Add each note separately.</p></div></div>
+            <datalist id="saved-note-suggestions">{#each allNotes as note}<option value={note}></option>{/each}</datalist>
             {#each [{ key: 'topNotes', title: 'Top notes', hint: 'The first impression', icon: '✧', example: 'Candied apple' }, { key: 'heartNotes', title: 'Heart notes', hint: 'The heart of the scent', icon: '❀', example: 'Caramel' }, { key: 'baseNotes', title: 'Base notes', hint: 'The lasting impression', icon: '◆', example: 'Sandalwood' }] as group}
               {@const kind = group.key as 'topNotes' | 'heartNotes' | 'baseNotes'}
-              <div class="note-section"><div class="note-title"><span class="note-icon">{group.icon}</span><div><h3>{group.title}</h3><p>{group.hint}</p></div></div><div class="note-entry"><input aria-label={`Add ${group.title.toLowerCase()}`} placeholder={`e.g. ${group.example}`} bind:value={noteInputs[kind]} onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addNote(kind); } }} /><button type="button" onclick={() => addNote(kind)}>+ Add note</button></div><div class="note-chips">{#each fragrance[kind] as note, index}<button type="button" title={`Remove ${note}`} onclick={() => removeNote(kind, index)}>{note} <span>×</span></button>{/each}{#if fragrance[kind].length === 0}<span class="empty-hint">No notes added yet</span>{/if}</div></div>
+              <div class="note-section"><div class="note-title"><span class="note-icon">{group.icon}</span><div><h3>{group.title}</h3><p>{group.hint}</p></div></div><div class="note-entry"><input aria-label={`Add ${group.title.toLowerCase()}`} list="saved-note-suggestions" placeholder={`e.g. ${group.example}`} bind:value={noteInputs[kind]} onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addNote(kind); } }} /><button type="button" onclick={() => addNote(kind)}>+ Add note</button></div><div class="note-chips">{#each fragrance[kind] as note, index}<button type="button" title={`Remove ${note}`} onclick={() => removeNote(kind, index)}>{note} <span>×</span></button>{/each}{#if fragrance[kind].length === 0}<span class="empty-hint">No notes added yet</span>{/if}</div></div>
             {/each}
           {:else}
             <div class="card-heading"><span class="card-icon">☷</span><div><h2>Finishing touches</h2><p>Add context and a little more character.</p></div></div>
@@ -231,7 +222,7 @@
         {#if visibleNotes.length === 0}
           <div class="empty-state"><div>◈</div><h2>{allNotes.length === 0 ? 'No notes in your collection yet' : 'No notes found'}</h2><p>{allNotes.length === 0 ? 'Add a note above, or add notes to a fragrance.' : 'Try another search term.'}</p>{#if allNotes.length === 0}<button class="primary-button" onclick={startNew}>Add a fragrance →</button>{/if}</div>
         {:else}
-          <div class="notes-grid">{#each visibleNotes as note}<article class="note-card"><div class="note-art">{#if imageFor(note)}<img src={imageFor(note)} alt={note} />{:else}<span>✧</span>{/if}</div><div class="note-card-body">{#if editingNote === note}<form class="rename-note-form" onsubmit={(event) => { event.preventDefault(); renameNote(note); }}><input aria-label={`Rename ${note}`} bind:value={editedNoteName} /><button type="submit" disabled={!editedNoteName.trim()}>Save</button><button type="button" onclick={() => editingNote = ''}>Cancel</button></form>{:else}<h2>{note}</h2>{/if}<p>Used in {entries.filter((item) => [...item.topNotes, ...item.heartNotes, ...item.baseNotes].some((value) => value.toLocaleLowerCase() === note.toLocaleLowerCase())).length} fragrances</p><form class="note-image-form" onsubmit={(event) => { event.preventDefault(); setNoteImage(note); }}><input type="url" aria-label={`Image link for ${note}`} placeholder="https://example.com/note.jpg" value={noteImageDrafts[note] ?? ''} oninput={(event) => noteImageDrafts[note] = event.currentTarget.value} /><div><button type="submit" disabled={savingNoteImage === note || !noteImageDrafts[note]?.trim()}>{savingNoteImage === note ? 'Saving…' : imageFor(note) ? 'Update image link' : '+ Add image link'}</button>{#if imageFor(note)}<button type="button" onclick={() => removeNoteImage(note)}>Remove image</button>{/if}</div></form><div class="note-manage-actions"><button onclick={() => { editingNote = note; editedNoteName = note; }}>Rename</button><button class="danger" onclick={() => deleteNote(note)}>Delete note</button></div></div></article>{/each}</div>
+          <div class="notes-grid">{#each visibleNotes as note}<article class="note-card"><div class="note-art">{#if imageFor(note)}<img src={imageFor(note)} alt={note} />{:else}<span>✧</span>{/if}</div><div class="note-card-body">{#if editingNote === note}<form class="rename-note-form" onsubmit={(event) => { event.preventDefault(); renameNote(note); }}><input aria-label={`Rename ${note}`} bind:value={editedNoteName} /><button type="submit" disabled={!editedNoteName.trim()}>Save</button><button type="button" onclick={() => editingNote = ''}>Cancel</button></form>{:else}<h2>{note}</h2>{/if}<p>Used in {noteImages.find((image) => image.name === note)?.usageCount ?? 0} fragrances</p><form class="note-image-form" onsubmit={(event) => { event.preventDefault(); setNoteImage(note); }}><input type="url" aria-label={`Image link for ${note}`} placeholder="https://example.com/note.jpg" value={noteImageDrafts[note] ?? ''} oninput={(event) => noteImageDrafts[note] = event.currentTarget.value} /><div><button type="submit" disabled={savingNoteImage === note || !noteImageDrafts[note]?.trim()}>{savingNoteImage === note ? 'Saving…' : imageFor(note) ? 'Update image link' : '+ Add image link'}</button>{#if imageFor(note)}<button type="button" onclick={() => removeNoteImage(note)}>Remove image</button>{/if}</div></form><div class="note-manage-actions"><button onclick={() => { editingNote = note; editedNoteName = note; }}>Rename</button><button class="danger" onclick={() => deleteNote(note)}>Delete note</button></div></div></article>{/each}</div>
         {/if}
       </div>
     {:else}
