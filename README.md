@@ -4,6 +4,8 @@ Scentkeep is a desktop journal for your fragrance collection. Record each scent'
 
 You can import and export fragrances and notes as CSV files. Scentkeep also checks for new releases in the app. On Windows, macOS, and Linux AppImage it can install a signed update and restart; for distribution packages on Linux it links to the release page.
 
+On first launch, choose a backup folder. Scentkeep immediately writes `scentkeep-fragrances.csv` and `scentkeep-notes.csv` there, then refreshes both files after each change to fragrances or notes, including CSV imports. Use **Backup folder** on the collection page to change the location. If you choose **Later**, the app asks again the next time it opens. The two files can be imported into a fresh collection to restore the data.
+
 ## Install
 
 Download the latest version from [GitHub Releases](https://github.com/reaperhound/scentkeep/releases/latest), then choose the file for your system:
@@ -18,6 +20,10 @@ Download the latest version from [GitHub Releases](https://github.com/reaperhoun
 | Other Linux distributions | `.AppImage` | Run `chmod +x ./scentkeep_*.AppImage`, then open the file. |
 
 Windows and macOS installers are currently unsigned by their respective platform certificate authorities, so your operating system may ask you to confirm that you want to open them.
+
+## Update
+
+Download the latest version from [GitHub Releases](https://github.com/reaperhound/scentkeep/releases/latest) and install it using the steps above.
 
 ## CSV import and export
 

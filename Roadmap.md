@@ -1,4 +1,4 @@
-- [ ] Profile picture change
+- [x] Profile picture change
 - [x] Collapsable sidebar
 - [x] Clickable breadcrumbs
 - [x] Bottles owned
@@ -8,5 +8,5 @@
 - [x] Price bought
 - [x] If wishlist current price
 - [ ] Stats
-  - [ ] 
+  - [ ] Algorithm to find notes u have in abundance
 - [x] Completed task
