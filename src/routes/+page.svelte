@@ -322,7 +322,7 @@
   </aside>
 
   <main>
-    <header class="topbar"><button class="mobile-menu" type="button" aria-label="Toggle navigation" aria-expanded={mobileSidebarOpen} onclick={() => mobileSidebarOpen = !mobileSidebarOpen}>☰</button><button class="top-back" type="button" aria-label="Back to collection" onclick={() => showShelf('Collection')}>←</button><nav class="breadcrumb" aria-label="Breadcrumb">{#if view === 'library'}<span aria-current="page">{activeShelf}</span>{:else if view === 'form' || view === 'detail'}{@const shelf = view === 'detail' ? (selectedFragrance?.shelf ?? 'Collection') : fragrance.shelf}<button onclick={() => showShelf(shelf)}>{shelf}</button><span>/</span><span aria-current="page">{view === 'form' ? (fragrance.id === undefined ? 'Add fragrance' : 'Edit fragrance') : (selectedFragrance?.name ?? 'Fragrance')}</span>{:else}<button onclick={() => showShelf('Collection')}>Collection</button><span>/</span><span aria-current="page">Perfume notes</span>{/if}</nav><div class="top-actions"><span class="notification-icon" aria-hidden="true">♧</span><button class="update-check" onclick={() => checkForUpdates()} disabled={checkingUpdate || installingUpdate}><img class="action-icon" src="/refresh.svg" alt="" />{checkingUpdate ? 'Checking…' : 'Check for updates'}</button><span class="local-badge"><span></span> Saved locally</span><button class="avatar profile-avatar" type="button" aria-label="Edit profile" title="Edit profile" onclick={editProfile}>{#if profilePicture}<img src={profilePicture} alt="" />{:else}{profileName.trim().charAt(0).toUpperCase() || 'S'}{/if}</button></div></header>
+    <header class="topbar"><button class="mobile-menu" type="button" aria-label="Toggle navigation" aria-expanded={mobileSidebarOpen} onclick={() => mobileSidebarOpen = !mobileSidebarOpen}>☰</button><button class="top-back" type="button" aria-label="Back to collection" onclick={() => showShelf('Collection')}>←</button><nav class="breadcrumb" aria-label="Breadcrumb">{#if view === 'library'}<span aria-current="page">{activeShelf}</span>{:else if view === 'form' || view === 'detail'}{@const shelf = view === 'detail' ? (selectedFragrance?.shelf ?? 'Collection') : fragrance.shelf}<button onclick={() => showShelf(shelf)}>{shelf}</button><span>/</span><span aria-current="page">{view === 'form' ? (fragrance.id === undefined ? 'Add fragrance' : 'Edit fragrance') : (selectedFragrance?.name ?? 'Fragrance')}</span>{:else}<button onclick={() => showShelf('Collection')}>Collection</button><span>/</span><span aria-current="page">Perfume notes</span>{/if}</nav><div class="top-actions"><button class="update-check" onclick={() => checkForUpdates()} disabled={checkingUpdate || installingUpdate}><img class="action-icon" src="/refresh.svg" alt="" />{checkingUpdate ? 'Checking…' : 'Check for updates'}</button><span class="local-badge"><span></span> Saved locally</span><button class="avatar profile-avatar" type="button" aria-label="Edit profile" title="Edit profile" onclick={editProfile}>{#if profilePicture}<img src={profilePicture} alt="" />{:else}{profileName.trim().charAt(0).toUpperCase() || 'S'}{/if}</button></div></header>
     {#if updateMessage}
       <div class="update-notice" role="status"><span>{updateMessage}</span>{#if availableUpdate && !installingUpdate}{#if canInstallUpdate}<button onclick={installUpdate}>Update and restart</button>{:else}<button onclick={() => openUrl('https://github.com/reaperhound/scentkeep/releases/latest')}>Open release page</button>{/if}{/if}</div>
     {/if}
@@ -474,8 +474,8 @@
   .brand-mark{gap:12px;padding:0 12px 40px;color:#111;font-family:Georgia,serif;font-size:22px;font-weight:700;letter-spacing:-1px;line-height:1}
   .brand-icon{width:31px;height:38px;object-fit:contain;flex:none}
   .brand-mark small{margin-top:7px;color:#171417;letter-spacing:2px;font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:8px;line-height:1.5}
-  .sidebar-label{color:#555153;font-size:10px;letter-spacing:2.4px;padding:0 11px 13px}
-  .nav-link{color:#171417;padding:9px 13px;margin-bottom:3px;font-size:12px;font-weight:550;gap:14px;min-height:41px}
+  .sidebar-label{color:#555153;font-size:10px;letter-spacing:2.4px;padding:0 11px 10px}
+  .nav-link{color:#171417;padding:9px 13px;margin-bottom:4px;font-size:12px;font-weight:550;gap:14px;min-height:44px}
   .nav-link>span:first-child{font-size:22px;width:25px;line-height:1}
   .nav-icon{display:block;width:25px;height:25px;object-fit:contain}
   .nav-link.active{color:#171417;background:#eee9e9}
@@ -491,7 +491,6 @@
   .breadcrumb span{color:#171417;padding:0 4px}
   .breadcrumb button{color:#171417}
   .top-actions{margin-left:auto;gap:25px}
-  .notification-icon{font-size:27px;color:#171417;line-height:1}
   .update-check{border-color:#e8e5e5;color:#171417;border-radius:12px;padding:12px 19px;font-size:12px;font-weight:550}
   .update-check{display:inline-flex;align-items:center;gap:10px}
   .action-icon{display:inline-block;width:19px;height:19px;object-fit:contain;flex:none}
@@ -552,16 +551,11 @@
   .bottle-counts span{padding:0 8px}
   .mini-notes{margin-top:14px;gap:8px}
   .mini-notes span{background:#eef0ff;color:#172563;padding:6px 14px;font-size:12px}
-  
-  
-  
-  
-  
   .list-layout{grid-template-columns:1fr}
   .list-layout .fragrance-card{max-width:none;display:grid;grid-template-columns:170px minmax(0,1fr) auto;align-items:center;border-bottom:1px solid #eee;padding-bottom:16px}
   .list-layout .fragrance-art{height:150px}
   .list-layout .fragrance-info{padding:0 20px}
   @media(max-width:1100px){.collection-controls{align-items:flex-start;flex-direction:column}.collection-search .search-box{width:min(60vw,492px)}.collection-subbar{align-items:flex-start;flex-direction:column}.collection-view{align-self:flex-end}}
-  @media(max-width:800px){.sidebar{width:68px!important}.top-actions .notification-icon{display:none}.page-content{padding:23px 20px 60px}}
+  @media(max-width:800px){.sidebar{width:68px!important}.page-content{padding:23px 20px 60px}}
   @media(max-width:550px){.top-back{display:none}.collection-heading{margin-left:0;padding-left:18px}.collection-heading h1{font-size:42px}.collection-controls .csv-actions{gap:8px}.collection-controls .csv-actions button{font-size:12px;padding:0 10px}.collection-controls .primary-button{min-width:0}.collection-search{width:100%}.collection-search .search-box{width:100%}.shelf-filters{gap:7px}.shelf-filters button{font-size:12px;padding:0 12px}.fragrance-grid{grid-template-columns:1fr}.fragrance-card{max-width:none}.list-layout .fragrance-card{grid-template-columns:100px minmax(0,1fr)}.list-layout .fragrance-art{height:100px}}
 </style>
