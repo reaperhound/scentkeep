@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { backend, type Fragrance, type NoteImage } from '$lib/backend';
+  import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+  import { backend, type CsvImportReport, type Fragrance, type NoteImage } from '$lib/backend';
 
   const blank = (): Fragrance => ({ collection: '', name: '', brand: '', year: new Date().getFullYear(), audience: 'Unisex', description: '', topNotes: [], heartNotes: [], baseNotes: [], perfumer: '', bottleRating: null, ratingCount: null, imageUrl: '' });
   let fragrance = $state<Fragrance>(blank());
@@ -24,6 +25,11 @@
   let activeNoteInput = $state<NoteLayer | null>(null);
   let highlightedNoteIndex = $state(-1);
   let duplicateNoteLayer = $state<NoteLayer | null>(null);
+  type CsvKind = 'fragrances' | 'notes';
+  let fragranceCsvInput = $state<HTMLInputElement>();
+  let noteCsvInput = $state<HTMLInputElement>();
+  let csvBusy = $state(false);
+  let csvReport = $state<{ kind: CsvKind; result: CsvImportReport } | null>(null);
   const steps = ['General information', 'Fragrance pyramid', 'Additional details'];
   const categories = [
     { value: 'Women', icon: '♀', label: 'Women' },
@@ -44,6 +50,42 @@
   async function refreshNotesAndFragrances() {
     entries = await backend.listFragrances();
     noteImages = await backend.listNoteImages();
+  }
+  async function exportCsv(kind: CsvKind) {
+    error = ''; success = ''; csvReport = null;
+    try {
+      const path = await saveDialog({
+        defaultPath: kind === 'fragrances' ? 'scentkeep-fragrances.csv' : 'scentkeep-notes.csv',
+        filters: [{ name: 'CSV files', extensions: ['csv'] }]
+      });
+      if (!path) return;
+      csvBusy = true;
+      if (kind === 'fragrances') await backend.exportFragrancesCsv(path);
+      else await backend.exportNotesCsv(path);
+      success = `${kind === 'fragrances' ? 'Fragrances' : 'Notes'} exported to CSV.`;
+    } catch (e) { error = String(e); }
+    finally { csvBusy = false; }
+  }
+  async function importCsv(event: Event, kind: CsvKind) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    error = ''; success = ''; csvReport = null;
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      error = 'Excel workbooks are not supported. Save the sheet as a CSV file, then import it.';
+      return;
+    }
+    csvBusy = true;
+    try {
+      const content = await file.text();
+      const result = kind === 'fragrances'
+        ? await backend.importFragrancesCsv(content)
+        : await backend.importNotesCsv(content);
+      await refreshNotesAndFragrances();
+      csvReport = { kind, result };
+    } catch (e) { error = String(e); }
+    finally { csvBusy = false; }
   }
   async function createNote() {
     error = ''; success = '';
@@ -299,8 +341,11 @@
       </div>
     {:else if view === 'notes'}
       <div class="page-content">
-        <div class="heading"><div><div class="eyebrow">YOUR SCENT INDEX</div><h1>Perfume notes<span class="heading-dot">.</span></h1><p>See every note in your collection and give it an image.</p></div><div class="step-count">{allNotes.length} NOTES</div></div>
+        <div class="heading"><div><div class="eyebrow">YOUR SCENT INDEX</div><h1>Perfume notes<span class="heading-dot">.</span></h1><p>See every note in your collection and give it an image.</p></div>
+          <div class="csv-actions"><button class="back-button" disabled={csvBusy} onclick={() => noteCsvInput?.click()}>Import CSV</button><button class="back-button" disabled={csvBusy} onclick={() => exportCsv('notes')}>Export CSV</button><input type="file" accept=".csv,.xlsx,.xls,text/csv" bind:this={noteCsvInput} onchange={(event) => importCsv(event, 'notes')} hidden /></div>
+        </div>
         {#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error" role="alert">{error}</div>{/if}
+        {#if csvReport?.kind === 'notes'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'note' : 'notes'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'note' : 'notes'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}
         <form class="new-note-form" onsubmit={(event) => { event.preventDefault(); createNote(); }}><input aria-label="New note name" placeholder="Add a new perfume note..." bind:value={newNoteName} /><button type="submit" disabled={!newNoteName.trim()}>+ Add note</button></form>
         <div class="library-toolbar"><div class="search-box">⌕ <input aria-label="Search notes" placeholder="Search perfume notes..." bind:value={noteSearch} /></div><span>{visibleNotes.length} {visibleNotes.length === 1 ? 'note' : 'notes'}</span></div>
         {#if visibleNotes.length === 0}
@@ -310,7 +355,9 @@
         {/if}
       </div>
     {:else}
-      <div class="page-content"><div class="heading"><div><div class="eyebrow">YOUR FRAGRANCE LIBRARY</div><h1>My collection<span class="heading-dot">.</span></h1><p>A home for every scent worth remembering.</p></div><button class="primary-button" onclick={startNew}>+ Add fragrance</button></div>{#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error">{error}</div>{/if}<div class="library-toolbar"><div class="search-box">⌕ <input aria-label="Search fragrances" placeholder="Search fragrances or brands..." bind:value={search} /></div><span>{visibleEntries.length} {visibleEntries.length === 1 ? 'fragrance' : 'fragrances'}</span></div>{#if visibleEntries.length === 0}<div class="empty-state"><div>✳</div><h2>{entries.length === 0 ? 'Your collection is waiting' : 'No fragrances found'}</h2><p>{entries.length === 0 ? 'Add your first fragrance to start your scent journal.' : 'Try another search term.'}</p>{#if entries.length === 0}<button class="primary-button" onclick={startNew}>Add your first fragrance →</button>{/if}</div>{:else}<div class="fragrance-grid">{#each visibleEntries as item}<article class="fragrance-card"><div class="fragrance-art">{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<span>✳</span>{/if}</div><div class="fragrance-info"><div class="fragrance-kicker">{item.collection || item.audience} · {item.year}</div><h2>{item.name}</h2><p>{item.brand}</p><div class="mini-notes">{#each [...item.topNotes, ...item.heartNotes, ...item.baseNotes].slice(0, 3) as note}<span>{note}</span>{/each}</div>{#if item.bottleRating !== null}<div class="rating">★ {item.bottleRating.toFixed(1)} <span>Bottle rating</span></div>{/if}</div><div class="card-actions"><button type="button" class="view-action" onclick={() => openDetail(item)}>View details →</button><button type="button" class="edit-action" onclick={() => startEdit(item)}>✎ Edit</button><button type="button" class="delete-action" onclick={() => remove(item)}>Delete</button></div></article>{/each}</div>{/if}</div>
+      <div class="page-content"><div class="heading"><div><div class="eyebrow">YOUR FRAGRANCE LIBRARY</div><h1>My collection<span class="heading-dot">.</span></h1><p>A home for every scent worth remembering.</p></div>
+          <div class="csv-actions"><button class="back-button" disabled={csvBusy} onclick={() => fragranceCsvInput?.click()}>Import CSV</button><button class="back-button" disabled={csvBusy} onclick={() => exportCsv('fragrances')}>Export CSV</button><button class="primary-button" onclick={startNew}>+ Add fragrance</button><input type="file" accept=".csv,.xlsx,.xls,text/csv" bind:this={fragranceCsvInput} onchange={(event) => importCsv(event, 'fragrances')} hidden /></div>
+        </div>{#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error">{error}</div>{/if}{#if csvReport?.kind === 'fragrances'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'fragrance' : 'fragrances'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'fragrance' : 'fragrances'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}<div class="library-toolbar"><div class="search-box">⌕ <input aria-label="Search fragrances" placeholder="Search fragrances or brands..." bind:value={search} /></div><span>{visibleEntries.length} {visibleEntries.length === 1 ? 'fragrance' : 'fragrances'}</span></div>{#if visibleEntries.length === 0}<div class="empty-state"><div>✳</div><h2>{entries.length === 0 ? 'Your collection is waiting' : 'No fragrances found'}</h2><p>{entries.length === 0 ? 'Add your first fragrance to start your scent journal.' : 'Try another search term.'}</p>{#if entries.length === 0}<button class="primary-button" onclick={startNew}>Add your first fragrance →</button>{/if}</div>{:else}<div class="fragrance-grid">{#each visibleEntries as item}<article class="fragrance-card"><div class="fragrance-art">{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<span>✳</span>{/if}</div><div class="fragrance-info"><div class="fragrance-kicker">{item.collection || item.audience} · {item.year}</div><h2>{item.name}</h2><p>{item.brand}</p><div class="mini-notes">{#each [...item.topNotes, ...item.heartNotes, ...item.baseNotes].slice(0, 3) as note}<span>{note}</span>{/each}</div>{#if item.bottleRating !== null}<div class="rating">★ {item.bottleRating.toFixed(1)} <span>Bottle rating</span></div>{/if}</div><div class="card-actions"><button type="button" class="view-action" onclick={() => openDetail(item)}>View details →</button><button type="button" class="edit-action" onclick={() => startEdit(item)}>✎ Edit</button><button type="button" class="delete-action" onclick={() => remove(item)}>Delete</button></div></article>{/each}</div>{/if}</div>
     {/if}
   </main>
 </div>
@@ -328,4 +375,11 @@
   .note-suggestions button{display:block;width:100%;border:0;border-radius:6px;background:transparent;color:#344c69;text-align:left;padding:9px 10px;font-size:12px;font-weight:550;white-space:normal}
   .note-suggestions button:hover,.note-suggestions button.highlighted{background:#eaf3ff;color:#2f80da}
   .note-error{margin-top:9px;color:#bd405a;font-size:11px}
+  .csv-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}
+  .csv-actions .back-button,.csv-actions .primary-button{white-space:nowrap;padding:11px 15px}
+  .csv-actions button:disabled{opacity:.55}
+  .import-result{background:#eaf4ff;color:#345577}
+  .import-result p{margin:8px 0 4px}
+  .import-result ul{margin:0;padding-left:20px;max-height:160px;overflow:auto}
+  @media(max-width:700px){.heading{align-items:start;flex-direction:column}.csv-actions{justify-content:flex-start}}
 </style>

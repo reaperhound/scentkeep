@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tauri::Manager;
 
+mod csv_io;
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Fragrance {
@@ -98,7 +100,14 @@ fn save_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<i64, St
     let mut conn = database(&app)?;
     let transaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     ensure_unique_fragrance(&transaction, &fragrance, None)?;
-    transaction.execute("INSERT INTO fragrances (collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url)
+    insert_fragrance(&transaction, &fragrance)?;
+    let id = transaction.last_insert_rowid();
+    transaction.commit().map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+fn insert_fragrance(conn: &Connection, fragrance: &Fragrance) -> Result<(), String> {
+    conn.execute("INSERT INTO fragrances (collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url)
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)", params![
         fragrance.collection.trim(), fragrance.name.trim(), fragrance.brand.trim(), fragrance.year,
         fragrance.audience, fragrance.description.trim(),
@@ -107,9 +116,7 @@ fn save_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<i64, St
         serde_json::to_string(&fragrance.base_notes).map_err(|e| e.to_string())?,
         fragrance.perfumer.trim(), fragrance.bottle_rating, fragrance.rating_count, fragrance.image_url.trim()
     ]).map_err(|e| e.to_string())?;
-    let id = transaction.last_insert_rowid();
-    transaction.commit().map_err(|e| e.to_string())?;
-    Ok(id)
+    Ok(())
 }
 
 #[tauri::command]
@@ -142,6 +149,10 @@ fn delete_fragrance(app: tauri::AppHandle, id: i64) -> Result<(), String> {
 #[tauri::command]
 fn list_fragrances(app: tauri::AppHandle) -> Result<Vec<Fragrance>, String> {
     let conn = database(&app)?;
+    load_fragrances(&conn)
+}
+
+fn load_fragrances(conn: &Connection) -> Result<Vec<Fragrance>, String> {
     let mut statement = conn.prepare("SELECT id, collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url FROM fragrances ORDER BY id DESC").map_err(|e| e.to_string())?;
     let rows = statement.query_map([], |row| {
         let top: String = row.get(7)?;
@@ -322,7 +333,8 @@ fn remove_note_image(app: tauri::AppHandle, name: String) -> Result<(), String> 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note, csv_io::export_fragrances_csv, csv_io::import_fragrances_csv, csv_io::export_notes_csv, csv_io::import_notes_csv])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

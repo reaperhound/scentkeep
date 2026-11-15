@@ -1,5 +1,13 @@
 # Tauri + SvelteKit + TypeScript
 
+## CSV import and export
+
+Use **Import CSV** or **Export CSV** on the collection page for fragrances, or on the perfume notes page for the note catalogue. Export a file first to get a template that Excel can edit. Save it as UTF-8 CSV before importing; `.xlsx` and `.xls` workbooks are not supported.
+
+Fragrance CSV columns are `collection,name,brand,year,audience,description,top_notes,heart_notes,base_notes,perfumer,bottle_rating,rating_count,image_url`. The three note columns contain JSON arrays, such as `["Rose","Musk"]`; leave a cell blank for no notes. Note catalogue CSV columns are `name,image_url`. Columns can be reordered, but the complete set of headers must be present with no extras.
+
+Import validates the whole file before saving anything. Fragrances with the same brand and name, or notes with the same name, are skipped regardless of case or surrounding spaces. The result lists each skipped duplicate and its CSV row number.
+
 This template should help get you started developing with Tauri, SvelteKit and TypeScript in Vite.
 
 ## Recommended IDE Setup

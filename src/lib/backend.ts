@@ -8,6 +8,7 @@ export type Fragrance = {
 };
 
 export type NoteImage = { name: string; imageUrl: string; usageCount: number };
+export type CsvImportReport = { imported: number; duplicates: string[] };
 
 export const backend = {
   listFragrances: () => invoke<Fragrance[]>('list_fragrances'),
@@ -19,5 +20,9 @@ export const backend = {
   renameNote: (oldName: string, newName: string) => invoke<void>('rename_note', { oldName, newName }),
   deleteNote: (name: string) => invoke<void>('delete_note', { name }),
   setNoteImage: (name: string, imageUrl: string) => invoke<void>('set_note_image', { name, imageUrl }),
-  removeNoteImage: (name: string) => invoke<void>('remove_note_image', { name })
+  removeNoteImage: (name: string) => invoke<void>('remove_note_image', { name }),
+  exportFragrancesCsv: (path: string) => invoke<void>('export_fragrances_csv', { path }),
+  importFragrancesCsv: (content: string) => invoke<CsvImportReport>('import_fragrances_csv', { content }),
+  exportNotesCsv: (path: string) => invoke<void>('export_notes_csv', { path }),
+  importNotesCsv: (content: string) => invoke<CsvImportReport>('import_notes_csv', { content })
 };
