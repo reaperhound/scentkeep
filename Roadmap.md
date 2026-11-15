@@ -1,0 +1,12 @@
+- [ ] Profile picture change
+- [x] Collapsable sidebar
+- [x] Clickable breadcrumbs
+- [x] Bottles owned
+- [x] Bottles finished
+- [x] Wishlist
+- [x] Favourite
+- [x] Price bought
+- [x] If wishlist current price
+- [ ] Stats
+  - [ ] 
+- [x] Completed task
