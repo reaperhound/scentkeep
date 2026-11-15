@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: --bundles deb,appimage
+          - platform: windows-latest
+            args: --bundles nsis,msi
+          - platform: macos-latest
+            args: --target universal-apple-darwin --bundles dmg
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Check release version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const version = process.env.RELEASE_TAG.slice(1);
+            const pkg = require("./package.json").version;
+            const tauri = require("./src-tauri/tauri.conf.json").version;
+            const cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8").match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+            if (`v${version}` !== process.env.RELEASE_TAG || [pkg, tauri, cargo].some(v => v !== version)) {
+              console.error(`Tag ${process.env.RELEASE_TAG} must match package.json (${pkg}), tauri.conf.json (${tauri}), and Cargo.toml (${cargo}).`);
+              process.exit(1);
+            }
+          '
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Scentkeep ${{ github.ref_name }}
+          releaseBody: Download the installer for your operating system below.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
