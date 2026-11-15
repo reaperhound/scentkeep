@@ -12,7 +12,7 @@
   let fragrance = $state<Fragrance>(blank());
   let entries = $state<Fragrance[]>([]);
   let step = $state(0);
-  let view = $state<'form' | 'library' | 'notes' | 'detail'>('form');
+  let view = $state<'form' | 'library' | 'notes' | 'detail'>('library');
   let activeShelf = $state<'Collection' | 'Wishlist' | 'Empties'>('Collection');
   let categoryMenuOpen = $state(false);
   let sidebarCollapsed = $state(false);
@@ -35,6 +35,8 @@
   let success = $state('');
   let saving = $state(false);
   let search = $state('');
+  let collectionFilter = $state<'All' | 'Owned' | 'Wishlist' | 'Empties'>('All');
+  let collectionLayout = $state<'grid' | 'list'>('grid');
   let noteInputs = $state({ topNotes: '', heartNotes: '', baseNotes: '' });
   type NoteLayer = 'topNotes' | 'heartNotes' | 'baseNotes';
   let activeNoteInput = $state<NoteLayer | null>(null);
@@ -59,7 +61,7 @@
   const allNotes = $derived(noteImages.map((note) => note.name).sort((a, b) => a.localeCompare(b)));
   const visibleNotes = $derived(allNotes.filter((note) => note.toLocaleLowerCase().includes(noteSearch.toLocaleLowerCase())));
   const selectedFragrance = $derived(entries.find((item) => item.id === selectedId));
-  const visibleEntries = $derived(entries.filter((item) => item.shelf === activeShelf && `${item.name} ${item.brand} ${item.collection}`.toLowerCase().includes(search.toLowerCase())));
+  const visibleEntries = $derived(entries.filter((item) => (activeShelf === 'Collection' ? (collectionFilter === 'All' || (collectionFilter === 'Owned' ? item.shelf === 'Collection' : item.shelf === collectionFilter)) : item.shelf === activeShelf) && `${item.name} ${item.brand} ${item.collection}`.toLowerCase().includes(search.toLowerCase())));
 
   onMount(async () => {
     try {
@@ -308,18 +310,18 @@
 <div class="app-shell" class:sidebar-collapsed={sidebarCollapsed} class:mobile-sidebar-open={mobileSidebarOpen}>
   <aside class="sidebar" aria-label="Main navigation">
     <button class="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!sidebarCollapsed} onclick={() => sidebarCollapsed = !sidebarCollapsed}>{sidebarCollapsed ? "→" : "←"}</button>
-    <div class="brand-mark"><span class="brand-icon">✳</span><span>Scentkeep<small>THE FRAGRANCE JOURNAL</small></span></div>
+    <div class="brand-mark"><span class="brand-icon">♧</span><span>Scentkeep<small>THE FRAGRANCE<br />JOURNAL</small></span></div>
     <div class="sidebar-label">WORKSPACE</div>
     {#each ['Collection', 'Wishlist', 'Empties'] as shelf}
-      <button title={shelf} class:active={view === 'library' && activeShelf === shelf} class="nav-link" onclick={() => showShelf(shelf as typeof activeShelf)}><span>{shelf === 'Collection' ? '▦' : shelf === 'Wishlist' ? '♡' : '◌'}</span><span class="nav-text">{shelf}</span><em>{entries.filter((item) => item.shelf === shelf).length}</em></button>
+      <button title={shelf} class:active={view === 'library' && activeShelf === shelf} class="nav-link" onclick={() => showShelf(shelf as typeof activeShelf)}><span>{shelf === 'Collection' ? '▢' : shelf === 'Wishlist' ? '♡' : '♻'}</span><span class="nav-text">{shelf}</span><em>{entries.filter((item) => item.shelf === shelf).length}</em></button>
     {/each}
     <button title="Add fragrance" class:active={view === 'form'} class="nav-link" onclick={startNew}><span>＋</span><span class="nav-text">Add fragrance</span></button>
     <button title="Perfume notes" class:active={view === 'notes'} class="nav-link" onclick={() => { view = 'notes'; error = ''; success = ''; mobileSidebarOpen = false; }}><span>◈</span><span class="nav-text">Perfume notes</span><em>{allNotes.length}</em></button>
-    <div class="side-bottom"><div class="side-orb">✦</div><strong>Your scent story starts here.</strong><p>Keep every note, memory and discovery in one beautiful place.</p></div>
+    <div class="side-bottom"><div class="side-orb">ⓘ</div><strong>Your scent story starts here.</strong><p>Keep every note, memory and discovery in one beautiful place.</p></div>
   </aside>
 
   <main>
-    <header class="topbar"><button class="mobile-menu" type="button" aria-label="Toggle navigation" aria-expanded={mobileSidebarOpen} onclick={() => mobileSidebarOpen = !mobileSidebarOpen}>☰</button><nav class="breadcrumb" aria-label="Breadcrumb">{#if view === 'library'}<span aria-current="page">{activeShelf}</span>{:else}<button onclick={() => showShelf('Collection')}>Collection</button>{#if view === 'form' || view === 'detail'}<span>/</span><button onclick={() => showShelf(view === 'detail' ? (selectedFragrance?.shelf ?? 'Collection') : fragrance.shelf)}>{view === 'detail' ? selectedFragrance?.shelf : fragrance.shelf}</button><span>/</span><span aria-current="page">{view === 'form' ? (fragrance.id === undefined ? 'Add fragrance' : 'Edit fragrance') : (selectedFragrance?.name ?? 'Fragrance')}</span>{:else}<span>/</span><span aria-current="page">Perfume notes</span>{/if}{/if}</nav><div class="top-actions"><button class="update-check" onclick={() => checkForUpdates()} disabled={checkingUpdate || installingUpdate}>{checkingUpdate ? 'Checking…' : 'Check for updates'}</button><span class="local-badge"><span></span> Saved locally</span><button class="avatar profile-avatar" type="button" aria-label="Edit profile" title="Edit profile" onclick={editProfile}>{#if profilePicture}<img src={profilePicture} alt="" />{:else}{profileName.trim().charAt(0).toUpperCase() || 'S'}{/if}</button></div></header>
+    <header class="topbar"><button class="mobile-menu" type="button" aria-label="Toggle navigation" aria-expanded={mobileSidebarOpen} onclick={() => mobileSidebarOpen = !mobileSidebarOpen}>☰</button><button class="top-back" type="button" aria-label="Back to collection" onclick={() => showShelf('Collection')}>←</button><nav class="breadcrumb" aria-label="Breadcrumb">{#if view === 'library'}<span aria-current="page">{activeShelf}</span>{:else if view === 'form' || view === 'detail'}{@const shelf = view === 'detail' ? (selectedFragrance?.shelf ?? 'Collection') : fragrance.shelf}<button onclick={() => showShelf(shelf)}>{shelf}</button><span>/</span><span aria-current="page">{view === 'form' ? (fragrance.id === undefined ? 'Add fragrance' : 'Edit fragrance') : (selectedFragrance?.name ?? 'Fragrance')}</span>{:else}<button onclick={() => showShelf('Collection')}>Collection</button><span>/</span><span aria-current="page">Perfume notes</span>{/if}</nav><div class="top-actions"><span class="notification-icon" aria-hidden="true">♧</span><button class="update-check" onclick={() => checkForUpdates()} disabled={checkingUpdate || installingUpdate}>{checkingUpdate ? 'Checking…' : 'Check for updates'}</button><span class="local-badge"><span></span> Saved locally</span><button class="avatar profile-avatar" type="button" aria-label="Edit profile" title="Edit profile" onclick={editProfile}>{#if profilePicture}<img src={profilePicture} alt="" />{:else}{profileName.trim().charAt(0).toUpperCase() || 'S'}{/if}</button></div></header>
     {#if updateMessage}
       <div class="update-notice" role="status"><span>{updateMessage}</span>{#if availableUpdate && !installingUpdate}{#if canInstallUpdate}<button onclick={installUpdate}>Update and restart</button>{:else}<button onclick={() => openUrl('https://github.com/reaperhound/scentkeep/releases/latest')}>Open release page</button>{/if}{/if}</div>
     {/if}
@@ -422,9 +424,15 @@
         {/if}
       </div>
     {:else}
-      <div class="page-content"><div class="heading"><div><div class="eyebrow">YOUR FRAGRANCE LIBRARY</div><h1>{activeShelf}<span class="heading-dot">.</span></h1><p>A home for every scent worth remembering.</p></div>
-          <div class="csv-actions"><button class="back-button" disabled={csvBusy} onclick={() => fragranceCsvInput?.click()}>Import CSV</button><button class="back-button" disabled={csvBusy} onclick={() => exportCsv('fragrances')}>Export CSV</button><button class="primary-button" onclick={startNew}>+ Add fragrance</button><input type="file" accept=".csv,.xlsx,.xls,text/csv" bind:this={fragranceCsvInput} onchange={(event) => importCsv(event, 'fragrances')} hidden /></div>
-        </div>{#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error">{error}</div>{/if}{#if csvReport?.kind === 'fragrances'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'fragrance' : 'fragrances'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'fragrance' : 'fragrances'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}<div class="library-toolbar"><div class="search-box">⌕ <input aria-label="Search fragrances" placeholder="Search fragrances or brands..." bind:value={search} /></div><span>{visibleEntries.length} {visibleEntries.length === 1 ? 'fragrance' : 'fragrances'}</span></div>{#if visibleEntries.length === 0}<div class="empty-state"><div>✳</div><h2>{entries.length === 0 ? 'Your collection is waiting' : 'No fragrances found'}</h2><p>{entries.length === 0 ? 'Add your first fragrance to start your scent journal.' : 'Try another search term.'}</p>{#if entries.length === 0}<button class="primary-button" onclick={startNew}>Add your first fragrance →</button>{/if}</div>{:else}<div class="fragrance-grid">{#each visibleEntries as item}<article class="fragrance-card"><div class="fragrance-art">{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<span>✳</span>{/if}</div><div class="fragrance-info"><div class="fragrance-kicker">{item.favourite ? "★ " : ""}{item.collection || item.audience} · {item.year}</div><h2>{item.name}</h2><p>{item.brand}</p><div class="bottle-counts">Owned {item.bottlesOwned} · Finished {item.bottlesFinished}{#if item.shelf === "Wishlist" && item.currentPrice !== null} · Current price {item.currentPrice.toFixed(2)}{/if}</div><div class="mini-notes">{#each [...item.topNotes, ...item.heartNotes, ...item.baseNotes].slice(0, 3) as note}<span>{note}</span>{/each}</div>{#if item.bottleRating !== null}<div class="rating">★ {item.bottleRating.toFixed(1)} <span>Bottle rating</span></div>{/if}</div><div class="card-actions"><button type="button" class="view-action" onclick={() => openDetail(item)}>View details →</button><button type="button" class="edit-action" onclick={() => startEdit(item)}>✎ Edit</button><button type="button" class="delete-action" onclick={() => remove(item)}>Delete</button></div></article>{/each}</div>{/if}</div>
+      <div class="page-content collection-page">
+        <div class="heading collection-heading"><div><div class="eyebrow">YOUR FRAGRANCE LIBRARY</div><h1>{activeShelf}</h1><p>A home for every scent worth remembering.</p></div></div>
+        {#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error">{error}</div>{/if}
+        {#if csvReport?.kind === 'fragrances'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'fragrance' : 'fragrances'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'fragrance' : 'fragrances'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}
+        <div class="collection-controls"><div class="collection-search"><label class="search-box"><span aria-hidden="true">⌕</span><input aria-label="Search fragrances" placeholder="Search fragrances or brands..." bind:value={search} /></label><button class="filter-button" type="button" aria-label="Show owned fragrances" title="Show owned fragrances" onclick={() => collectionFilter = collectionFilter === 'Owned' ? 'All' : 'Owned'}>☷</button></div><div class="csv-actions"><button class="back-button" disabled={csvBusy} onclick={() => fragranceCsvInput?.click()}>⇩ <span>Import CSV</span></button><button class="back-button" disabled={csvBusy} onclick={() => exportCsv('fragrances')}>⇧ <span>Export CSV</span></button><button class="primary-button" onclick={startNew}>＋ <span>Add Fragrance</span></button><input type="file" accept=".csv,.xlsx,.xls,text/csv" bind:this={fragranceCsvInput} onchange={(event) => importCsv(event, 'fragrances')} hidden /></div></div>
+        <div class="collection-subbar"><div class="shelf-filters">{#if activeShelf === 'Collection'}{#each ['All', 'Owned', 'Wishlist', 'Empties'] as filter}<button type="button" class:active={collectionFilter === filter} onclick={() => collectionFilter = filter as typeof collectionFilter}><span>{filter === 'All' ? '' : filter === 'Owned' ? '◇' : filter === 'Wishlist' ? '♡' : '♻'}</span>{filter} ({filter === 'All' ? entries.length : filter === 'Owned' ? entries.filter((item) => item.shelf === 'Collection').length : entries.filter((item) => item.shelf === filter).length})</button>{/each}{/if}</div><div class="collection-view"><span>{visibleEntries.length} {visibleEntries.length === 1 ? 'fragrance' : 'fragrances'}</span><div class="layout-switch"><button type="button" class:active={collectionLayout === 'grid'} aria-label="Grid view" onclick={() => collectionLayout = 'grid'}>⌘</button><button type="button" class:active={collectionLayout === 'list'} aria-label="List view" onclick={() => collectionLayout = 'list'}>☰</button></div></div></div>
+        {#if visibleEntries.length === 0}<div class="empty-state"><div>✳</div><h2>{entries.length === 0 ? 'Your collection is waiting' : 'No fragrances found'}</h2><p>{entries.length === 0 ? 'Add your first fragrance to start your scent journal.' : 'Try another search or filter.'}</p>{#if entries.length === 0}<button class="primary-button" onclick={startNew}>Add your first fragrance →</button>{/if}</div>
+        {:else}<div class="fragrance-grid" class:list-layout={collectionLayout === 'list'}>{#each visibleEntries as item}<article class="fragrance-card"><div class="fragrance-art"><span class="shelf-badge">◆ {item.shelf === 'Collection' ? 'Owned' : item.shelf}</span>{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<span class="bottle-placeholder">✳</span>{/if}<button class="card-menu" type="button" aria-label={`Edit ${item.name}`} onclick={() => startEdit(item)}>···</button></div><div class="fragrance-info"><div class="fragrance-kicker">{item.audience} · {item.year}</div><h2>{item.name}</h2><p>{item.brand}</p><div class="bottle-counts">{item.shelf === 'Collection' ? 'Owned' : item.shelf} <span>•</span> {item.collection || 'Fragrance Oil'}</div><div class="mini-notes">{#each [...item.topNotes, ...item.heartNotes, ...item.baseNotes].slice(0, 3) as note}<span>{note}</span>{/each}</div></div><div class="card-actions"><button type="button" class="view-action" onclick={() => openDetail(item)}>View details →</button><button type="button" class="edit-action" onclick={() => startEdit(item)}>✎ <span>Edit</span></button><button type="button" class="delete-action" onclick={() => remove(item)}>♜ <span>Delete</span></button></div></article>{/each}</div>{/if}
+      </div>
     {/if}
   </main>
 </div>
@@ -458,4 +466,89 @@
   .update-check:disabled{opacity:.6;cursor:wait}
   .update-notice{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 26px;background:#eaf3ff;color:#315b84;font-size:12px}
   .update-notice button{border:0;border-radius:6px;background:#448ff0;color:#fff;padding:8px 12px;font-size:11px;font-weight:700;cursor:pointer}
+  /* Collection visual system */
+  :global(body){color:#171417;background:#fff;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .sidebar{width:272px;border-right:1px solid #e8e5e5;padding:36px 21px 22px}
+  .sidebar-toggle{display:none}
+  .brand-mark{gap:15px;padding:0 16px 49px;color:#111;font-family:Georgia,serif;font-size:27px;font-weight:700;letter-spacing:-1px;line-height:1}
+  .brand-icon{width:36px;height:44px;color:#bf830c;background:transparent;border:2px solid #bf830c;border-radius:8px;font-size:28px;font-family:Arial,sans-serif;font-weight:400}
+  .brand-mark small{margin-top:9px;color:#171417;letter-spacing:2.4px;font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:9px;line-height:1.55}
+  .sidebar-label{color:#555153;font-size:11px;letter-spacing:2.8px;padding:0 11px 17px}
+  .nav-link{color:#171417;padding:11px 15px;margin-bottom:4px;font-size:15px;font-weight:550;gap:18px;min-height:47px}
+  .nav-link>span:first-child{font-size:26px;width:25px;line-height:1}
+  .nav-link.active{color:#171417;background:#eee9e9}
+  .nav-link em{color:#292629;font-size:13px;font-weight:400}
+  .nav-link.active em{background:#f1ded1;border-radius:50%;padding:4px 8px}
+  .side-bottom{border:1px solid #eee9e9;background:#fcfbfb;color:#171417;padding:19px 23px;border-radius:17px}
+  .side-orb{background:transparent;color:#171417;width:auto;height:auto;display:block;text-align:left;font-size:22px;margin-bottom:8px}
+  .side-bottom strong{display:block;font-family:Georgia,serif;font-size:22px;font-style:italic;font-weight:400;line-height:1.2}
+  .side-bottom p{font-size:12px;color:#595557;line-height:1.6}
+  .topbar{height:75px;border-bottom:0;padding:0 24px;justify-content:flex-start;gap:26px}
+  .top-back{width:38px;height:38px;border:0;border-radius:9px;background:#f5f4f4;font-size:22px;color:#171417}
+  .breadcrumb{font-size:16px;color:#171417;font-weight:650}
+  .breadcrumb span{color:#171417;padding:0 4px}
+  .breadcrumb button{color:#171417}
+  .top-actions{margin-left:auto;gap:25px}
+  .notification-icon{font-size:27px;color:#171417;line-height:1}
+  .update-check{border-color:#e8e5e5;color:#171417;border-radius:12px;padding:12px 19px;font-size:13px;font-weight:550}
+  .update-check:before{content:'⟳';font-size:22px;vertical-align:-2px;margin-right:10px}
+  .local-badge{color:#171417;font-size:13px}
+  .local-badge span{background:#16a34a;width:11px;height:11px;margin-right:9px}
+  .avatar{width:45px;height:45px;background:#f1eef1;color:#171417;font-family:Georgia,serif;font-size:20px;font-weight:400}
+  .page-content{max-width:none;padding:23px 22px 70px}
+  .collection-heading{border-left:2px solid #bd8a13;margin:0 0 27px 17px;padding:7px 0 5px 35px;min-height:120px;align-items:center}
+  .eyebrow{color:#4d494c;letter-spacing:4px;font-size:11px;margin-bottom:10px}
+  .collection-heading h1{color:#111;font-size:52px;margin:0 0 4px;letter-spacing:-2px}
+  .heading-dot{color:#ad7d11}
+  .heading p{color:#5e5a5d;font-size:17px}
+  .collection-controls{display:flex;align-items:center;justify-content:space-between;gap:22px;margin-bottom:29px}
+  .collection-search{display:flex;align-items:center;gap:16px;min-width:0}
+  .collection-search .search-box{width:min(40vw,492px);height:47px;background:#faf9f9;border-color:#e4e1e1;border-radius:12px;color:#171417;font-size:30px;padding:0 19px}
+  .collection-search .search-box input{background:transparent;font-size:15px;color:#171417;padding-left:14px}
+  .filter-button{height:47px;width:55px;border:1px solid #e7e3e3;border-radius:12px;background:#fff;color:#171417;font-size:26px}
+  .collection-controls .csv-actions{gap:17px}
+  .collection-controls .csv-actions button{height:47px;border-radius:11px;font-size:14px;font-weight:600;padding:0 18px}
+  .collection-controls .csv-actions .back-button{color:#171417;border-color:#e7e3e3}
+  .collection-controls .csv-actions .back-button:first-letter{font-size:22px}
+  .primary-button{background:#552044;color:#fff;box-shadow:none}
+  .primary-button:hover{background:#6c2b59}
+  .collection-controls .primary-button{min-width:194px}
+  .collection-controls .primary-button span{margin:0}
+  .collection-subbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:25px}
+  .shelf-filters{display:flex;align-items:center;gap:15px;flex-wrap:wrap}
+  .shelf-filters button{border:1px solid #e8e5e5;border-radius:22px;background:#fff;color:#171417;min-height:41px;padding:0 23px;font-size:14px;font-weight:550}
+  .shelf-filters button span{font-size:22px;margin-right:8px;vertical-align:-2px}
+  .shelf-filters button.active{background:#552044;color:#fff;border-color:#552044}
+  .collection-view{display:flex;align-items:center;gap:25px;white-space:nowrap;color:#3e4153;font-size:14px}
+  .layout-switch{display:flex;border:1px solid #e7e3e3;border-radius:12px;overflow:hidden}
+  .layout-switch button{border:0;background:#fff;width:59px;height:39px;color:#171417;font-size:23px}
+  .layout-switch button.active{background:#552044;color:#fff;border-radius:10px}
+  .fragrance-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,360px));gap:23px}
+  .fragrance-card{border-radius:0;overflow:visible;max-width:360px}
+  .fragrance-art{height:300px;position:relative;background:#fff;color:#c9a768}
+  .fragrance-art img{height:100%;width:100%;object-fit:contain}
+  .bottle-placeholder{font-size:120px;color:#d1ac6c}
+  .shelf-badge{position:absolute;top:12px;left:20px;z-index:1;background:#dff7e7;color:#118041;border-radius:20px;padding:7px 12px;font-size:12px;font-weight:600}
+  .card-menu{position:absolute;top:12px;right:0;width:39px;height:39px;border:0;border-radius:50%;background:#f7f6f6;color:#171417;font-size:24px;line-height:0}
+  .fragrance-info{padding:0 6px}
+  .fragrance-kicker{color:#171417;font-size:10px;letter-spacing:2px}
+  .fragrance-info h2{font-size:29px;font-weight:600;color:#171417;margin:6px 0 2px}
+  .fragrance-info p{font-size:15px;color:#5e5a5d}
+  .bottle-counts{font-size:14px;color:#3e4153;margin-top:9px}
+  .bottle-counts span{padding:0 8px}
+  .mini-notes{margin-top:14px;gap:8px}
+  .mini-notes span{background:#eef0ff;color:#172563;padding:6px 14px;font-size:12px}
+  .card-actions{margin:19px 6px 0;padding:16px 0;border-top:1px solid #e8e5e5;gap:17px}
+  .card-actions button{font-size:13px;font-weight:550}
+  .card-actions .view-action{color:#552044}
+  .card-actions .edit-action{color:#3e4153}
+  .card-actions .delete-action{color:#e00}
+  .list-layout{grid-template-columns:1fr}
+  .list-layout .fragrance-card{max-width:none;display:grid;grid-template-columns:170px minmax(0,1fr) auto;align-items:center;border-bottom:1px solid #eee;padding-bottom:16px}
+  .list-layout .fragrance-art{height:150px}
+  .list-layout .fragrance-info{padding:0 20px}
+  .list-layout .card-actions{border:0;margin:0;flex-direction:column;align-items:flex-start}
+  @media(max-width:1100px){.collection-controls{align-items:flex-start;flex-direction:column}.collection-search .search-box{width:min(60vw,492px)}.collection-subbar{align-items:flex-start;flex-direction:column}.collection-view{align-self:flex-end}}
+  @media(max-width:800px){.sidebar{width:68px!important}.top-actions .notification-icon{display:none}.page-content{padding:23px 20px 60px}}
+  @media(max-width:550px){.top-back{display:none}.collection-heading{margin-left:0;padding-left:18px}.collection-heading h1{font-size:42px}.collection-controls .csv-actions{gap:8px}.collection-controls .csv-actions button{font-size:12px;padding:0 10px}.collection-controls .primary-button{min-width:0}.collection-search{width:100%}.collection-search .search-box{width:100%}.shelf-filters{gap:7px}.shelf-filters button{font-size:12px;padding:0 12px}.fragrance-grid{grid-template-columns:1fr}.fragrance-card{max-width:none}.list-layout .fragrance-card{grid-template-columns:100px minmax(0,1fr)}.list-layout .fragrance-art{height:100px}.list-layout .card-actions{grid-column:1/-1;flex-direction:row}}
 </style>
