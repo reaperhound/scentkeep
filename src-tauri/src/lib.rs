@@ -41,11 +41,14 @@ fn database(app: &tauri::AppHandle) -> Result<Connection, String> {
         rating_count INTEGER,
         image_url TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS note_images (
+        name TEXT PRIMARY KEY COLLATE NOCASE,
+        image_data_url TEXT NOT NULL
     );").map_err(|e| e.to_string())?;
     Ok(conn)
 }
 
-#[tauri::command]
 fn validate_fragrance(fragrance: &Fragrance) -> Result<(), String> {
     if fragrance.name.trim().is_empty() || fragrance.brand.trim().is_empty() {
         return Err("Name and brand are required".into());
@@ -123,11 +126,51 @@ fn list_fragrances(app: tauri::AppHandle) -> Result<Vec<Fragrance>, String> {
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteImage {
+    name: String,
+    image_data_url: String,
+}
+
+#[tauri::command]
+fn list_note_images(app: tauri::AppHandle) -> Result<Vec<NoteImage>, String> {
+    let conn = database(&app)?;
+    let mut statement = conn.prepare("SELECT name, image_data_url FROM note_images")
+        .map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |row| Ok(NoteImage {
+        name: row.get(0)?, image_data_url: row.get(1)?,
+    })).map_err(|e| e.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_note_image(app: tauri::AppHandle, name: String, image_data_url: String) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() { return Err("Note name is required".into()); }
+    if !image_data_url.starts_with("data:image/") || !image_data_url.contains(";base64,") {
+        return Err("Select a valid image file".into());
+    }
+    if image_data_url.len() > 4_000_000 { return Err("Image is too large".into()); }
+    let conn = database(&app)?;
+    conn.execute("INSERT INTO note_images (name, image_data_url) VALUES (?1, ?2)
+        ON CONFLICT(name) DO UPDATE SET image_data_url = excluded.image_data_url", params![name, image_data_url])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn remove_note_image(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    let conn = database(&app)?;
+    conn.execute("DELETE FROM note_images WHERE name = ?1", [name.trim()]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances])
+        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
