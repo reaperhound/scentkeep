@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "scentkeep",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "identifier": "com.scentkeep.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -21,8 +21,15 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI0Nzg2NzhFRjI3OTMxRDcKUldUWE1YbnlqbWQ0dExTT01GUmRsOWV4YTBuVWJNQUh4V0l5dzRHY1hsQk1MRkQxNTk3dnVEQzcK",
+      "endpoints": ["https://github.com/reaperhound/scentkeep/releases/latest/download/latest.json"]
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",

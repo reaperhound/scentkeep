@@ -329,12 +329,22 @@ fn remove_note_image(app: tauri::AppHandle, name: String) -> Result<(), String> 
     Ok(())
 }
 
+#[tauri::command]
+fn can_install_update() -> bool {
+    #[cfg(target_os = "linux")]
+    { std::env::var_os("APPIMAGE").is_some() }
+    #[cfg(not(target_os = "linux"))]
+    { true }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note, csv_io::export_fragrances_csv, csv_io::import_fragrances_csv, csv_io::export_notes_csv, csv_io::import_notes_csv])
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note, can_install_update, csv_io::export_fragrances_csv, csv_io::import_fragrances_csv, csv_io::export_notes_csv, csv_io::import_notes_csv])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

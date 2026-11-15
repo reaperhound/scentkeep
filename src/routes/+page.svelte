@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+  import { isTauri } from '@tauri-apps/api/core';
+  import { invoke } from '@tauri-apps/api/core';
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { check, type Update } from '@tauri-apps/plugin-updater';
+  import { relaunch } from '@tauri-apps/plugin-process';
   import { backend, type CsvImportReport, type Fragrance, type NoteImage } from '$lib/backend';
 
   const blank = (): Fragrance => ({ collection: '', name: '', brand: '', year: new Date().getFullYear(), audience: 'Unisex', description: '', topNotes: [], heartNotes: [], baseNotes: [], perfumer: '', bottleRating: null, ratingCount: null, imageUrl: '' });
@@ -30,6 +35,11 @@
   let noteCsvInput = $state<HTMLInputElement>();
   let csvBusy = $state(false);
   let csvReport = $state<{ kind: CsvKind; result: CsvImportReport } | null>(null);
+  let availableUpdate = $state<Update | null>(null);
+  let updateMessage = $state('');
+  let checkingUpdate = $state(false);
+  let installingUpdate = $state(false);
+  let canInstallUpdate = $state(true);
   const steps = ['General information', 'Fragrance pyramid', 'Additional details'];
   const categories = [
     { value: 'Women', icon: '♀', label: 'Women' },
@@ -45,7 +55,41 @@
     try { entries = await backend.listFragrances();
       noteImages = await backend.listNoteImages(); }
     catch (e) { error = String(e); }
+    if (isTauri()) {
+      canInstallUpdate = await invoke<boolean>('can_install_update');
+      void checkForUpdates(true);
+    }
   });
+
+  async function checkForUpdates(silent = false) {
+    if (!isTauri() || checkingUpdate || installingUpdate) return;
+    checkingUpdate = true;
+    if (!silent) updateMessage = '';
+    try {
+      availableUpdate = await check();
+      updateMessage = availableUpdate
+        ? canInstallUpdate ? `Version ${availableUpdate.version} is available.` : `Version ${availableUpdate.version} is available. Download the package for your Linux distribution from the release page.`
+        : silent ? '' : 'You are up to date.';
+    } catch (e) {
+      updateMessage = `Could not check for updates: ${String(e)}`;
+    } finally { checkingUpdate = false; }
+  }
+
+  async function installUpdate() {
+    if (!availableUpdate || installingUpdate) return;
+    installingUpdate = true;
+    updateMessage = 'Downloading update…';
+    try {
+      await availableUpdate.downloadAndInstall((event) => {
+        if (event.event === 'Finished') updateMessage = 'Installing update…';
+      });
+      updateMessage = 'Restarting to finish the update…';
+      await relaunch();
+    } catch (e) {
+      updateMessage = `Could not install update: ${String(e)}`;
+      installingUpdate = false;
+    }
+  }
 
   async function refreshNotesAndFragrances() {
     entries = await backend.listFragrances();
@@ -255,7 +299,10 @@
   </aside>
 
   <main>
-    <header class="topbar"><div class="breadcrumb">Collection <span>/</span> {view === 'form' ? (fragrance.id === undefined ? 'Add fragrance' : 'Edit fragrance') : view === 'notes' ? 'Perfume notes' : view === 'detail' ? (selectedFragrance?.name ?? 'Fragrance') : 'All fragrances'}</div><div class="top-actions"><span class="local-badge"><span></span> Saved locally</span><div class="avatar">S</div></div></header>
+    <header class="topbar"><div class="breadcrumb">Collection <span>/</span> {view === 'form' ? (fragrance.id === undefined ? 'Add fragrance' : 'Edit fragrance') : view === 'notes' ? 'Perfume notes' : view === 'detail' ? (selectedFragrance?.name ?? 'Fragrance') : 'All fragrances'}</div><div class="top-actions"><button class="update-check" onclick={() => checkForUpdates()} disabled={checkingUpdate || installingUpdate}>{checkingUpdate ? 'Checking…' : 'Check for updates'}</button><span class="local-badge"><span></span> Saved locally</span><div class="avatar">S</div></div></header>
+    {#if updateMessage}
+      <div class="update-notice" role="status"><span>{updateMessage}</span>{#if availableUpdate && !installingUpdate}{#if canInstallUpdate}<button onclick={installUpdate}>Update and restart</button>{:else}<button onclick={() => openUrl('https://github.com/reaperhound/scentkeep/releases/latest')}>Open release page</button>{/if}{/if}</div>
+    {/if}
     {#if view === 'form'}
       <div class="page-content">
         <div class="heading"><div><div class="eyebrow">YOUR FRAGRANCE LIBRARY</div><h1>{fragrance.id === undefined ? 'Add a fragrance' : 'Edit fragrance'}<span class="heading-dot">.</span></h1><p>Capture the details that make each scent unforgettable.</p></div><div class="step-count">STEP 0{step + 1} <span>/ 03</span></div></div>
@@ -382,4 +429,8 @@
   .import-result p{margin:8px 0 4px}
   .import-result ul{margin:0;padding-left:20px;max-height:160px;overflow:auto}
   @media(max-width:700px){.heading{align-items:start;flex-direction:column}.csv-actions{justify-content:flex-start}}
+  .update-check{border:1px solid #d6e5f4;border-radius:7px;background:#fff;color:#3d81ca;padding:8px 12px;font-size:11px;font-weight:700;cursor:pointer}
+  .update-check:disabled{opacity:.6;cursor:wait}
+  .update-notice{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 26px;background:#eaf3ff;color:#315b84;font-size:12px}
+  .update-notice button{border:0;border-radius:6px;background:#448ff0;color:#fff;padding:8px 12px;font-size:11px;font-weight:700;cursor:pointer}
 </style>
