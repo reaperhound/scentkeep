@@ -121,7 +121,7 @@ fn csv_string(writer: csv::Writer<Vec<u8>>) -> Result<String, String> {
     String::from_utf8(writer.into_inner().map_err(|e| e.to_string())?).map_err(|e| e.to_string())
 }
 
-fn fragrance_csv(conn: &Connection) -> Result<String, String> {
+pub(super) fn fragrance_csv(conn: &Connection) -> Result<String, String> {
     let mut writer = WriterBuilder::new()
         .has_headers(false)
         .from_writer(Vec::new());
@@ -214,7 +214,7 @@ fn import_fragrances(conn: &mut Connection, content: &str) -> Result<ImportRepor
     Ok(report)
 }
 
-fn note_csv(conn: &Connection) -> Result<String, String> {
+pub(super) fn note_csv(conn: &Connection) -> Result<String, String> {
     let mut writer = WriterBuilder::new()
         .has_headers(false)
         .from_writer(Vec::new());
@@ -303,7 +303,9 @@ pub(super) fn import_fragrances_csv(
     app: tauri::AppHandle,
     content: String,
 ) -> Result<ImportReport, String> {
-    import_fragrances(&mut database(&app)?, &content)
+    let report = import_fragrances(&mut database(&app)?, &content)?;
+    if report.imported > 0 { backup::after_change(&app)?; }
+    Ok(report)
 }
 
 #[tauri::command]
@@ -320,7 +322,9 @@ pub(super) fn import_notes_csv(
     app: tauri::AppHandle,
     content: String,
 ) -> Result<ImportReport, String> {
-    import_notes(&mut database(&app)?, &content)
+    let report = import_notes(&mut database(&app)?, &content)?;
+    if report.imported > 0 { backup::after_change(&app)?; }
+    Ok(report)
 }
 
 #[cfg(test)]

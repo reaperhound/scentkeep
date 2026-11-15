@@ -1,5 +1,5 @@
 <script lang="ts">
-  type Icon = 'collection' | 'wishlist' | 'empties' | 'add' | 'notes' | 'search' | 'grid' | 'list' | 'library' | 'filter' | 'menu' | 'back' | 'forward' | 'refresh' | 'more' | 'edit' | 'trash' | 'bottle' | 'import' | 'export' | 'female' | 'male' | 'unisex';
+  type Icon = 'collection' | 'wishlist' | 'empties' | 'add' | 'notes' | 'settings' | 'search' | 'grid' | 'list' | 'library' | 'filter' | 'menu' | 'back' | 'forward' | 'refresh' | 'more' | 'edit' | 'trash' | 'bottle' | 'import' | 'export' | 'female' | 'male' | 'unisex';
   let { name, size = 20 }: { name: Icon; size?: number } = $props();
 </script>
 
@@ -14,6 +14,8 @@
     <circle cx="12" cy="12" r="9" /><path d="M12 8v8m-4-4h8" />
   {:else if name === 'notes'}
     <path d="M20 4c-9 0-15 4-15 11a5 5 0 0 0 5 5c7 0 11-6 10-16Z" /><path d="M5 20c2-4 6-7 11-10" />
+  {:else if name === 'settings'}
+    <circle cx="12" cy="12" r="3" /><path d="M10 2h4l.6 2.3c.5.2 1 .5 1.5.9l2.3-.7 2 3.5-1.7 1.7c.1.6.1 1.1 0 1.7l1.7 1.7-2 3.5-2.3-.7c-.5.4-1 .7-1.5.9L14 22h-4l-.6-2.3c-.5-.2-1-.5-1.5-.9l-2.3.7-2-3.5 1.7-1.7c-.1-.6-.1-1.1 0-1.7L3.6 11l2-3.5 2.3.7c.5-.4 1-.7 1.5-.9L10 2Z" />
   {:else if name === 'search'}
     <circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" />
   {:else if name === 'list'}

@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use tauri::Manager;
 
 mod csv_io;
+mod backup;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -143,6 +144,7 @@ fn save_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<i64, St
     insert_fragrance(&transaction, &fragrance)?;
     let id = transaction.last_insert_rowid();
     transaction.commit().map_err(|e| e.to_string())?;
+    backup::after_change(&app)?;
     Ok(id)
 }
 
@@ -175,7 +177,8 @@ fn update_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<(), S
         fragrance.perfumer.trim(), fragrance.bottle_rating, fragrance.rating_count, fragrance.image_url.trim(), fragrance.shelf, fragrance.bottles_owned, fragrance.bottles_finished, fragrance.favourite, fragrance.price_bought, fragrance.current_price, fragrance.concentration.trim(), id
     ]).map_err(|e| e.to_string())?;
     if changed == 0 { return Err("Fragrance not found".into()); }
-    transaction.commit().map_err(|e| e.to_string())
+    transaction.commit().map_err(|e| e.to_string())?;
+    backup::after_change(&app)
 }
 
 #[tauri::command]
@@ -183,7 +186,7 @@ fn delete_fragrance(app: tauri::AppHandle, id: i64) -> Result<(), String> {
     let conn = database(&app)?;
     let changed = conn.execute("DELETE FROM fragrances WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
     if changed == 0 { return Err("Fragrance not found".into()); }
-    Ok(())
+    backup::after_change(&app)
 }
 
 #[tauri::command]
@@ -275,7 +278,8 @@ fn create_note(app: tauri::AppHandle, name: String) -> Result<(), String> {
     ensure_unique_note(&transaction, name, None)?;
     transaction.execute("INSERT INTO note_images (name, image_data_url) VALUES (?1, '')", [name])
         .map_err(|e| if e.to_string().contains("UNIQUE") { "That note already exists".into() } else { e.to_string() })?;
-    transaction.commit().map_err(|e| e.to_string())
+    transaction.commit().map_err(|e| e.to_string())?;
+    backup::after_change(&app)
 }
 
 fn ensure_unique_note(conn: &Connection, name: &str, except_name: Option<&str>) -> Result<(), String> {
@@ -336,7 +340,8 @@ fn rename_note(app: tauri::AppHandle, old_name: String, new_name: String) -> Res
         .map_err(|e| if e.to_string().contains("UNIQUE") { "That note already exists".into() } else { e.to_string() })?;
     if changed == 0 { return Err("Note not found".into()); }
     rewrite_fragrance_notes(&transaction, old_name, Some(new_name))?;
-    transaction.commit().map_err(|e| e.to_string())
+    transaction.commit().map_err(|e| e.to_string())?;
+    backup::after_change(&app)
 }
 
 #[tauri::command]
@@ -347,7 +352,8 @@ fn delete_note(app: tauri::AppHandle, name: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     if changed == 0 { return Err("Note not found".into()); }
     rewrite_fragrance_notes(&transaction, name.trim(), None)?;
-    transaction.commit().map_err(|e| e.to_string())
+    transaction.commit().map_err(|e| e.to_string())?;
+    backup::after_change(&app)
 }
 
 #[tauri::command]
@@ -359,14 +365,15 @@ fn set_note_image(app: tauri::AppHandle, name: String, image_url: String) -> Res
     let changed = conn.execute("UPDATE note_images SET image_data_url = ?2 WHERE name = ?1", params![name, image_url.trim()])
         .map_err(|e| e.to_string())?;
     if changed == 0 { return Err("Note not found".into()); }
-    Ok(())
+    backup::after_change(&app)
 }
 
 #[tauri::command]
 fn remove_note_image(app: tauri::AppHandle, name: String) -> Result<(), String> {
     let conn = database(&app)?;
-    conn.execute("UPDATE note_images SET image_data_url = '' WHERE name = ?1", [name.trim()]).map_err(|e| e.to_string())?;
-    Ok(())
+    let changed = conn.execute("UPDATE note_images SET image_data_url = '' WHERE name = ?1", [name.trim()]).map_err(|e| e.to_string())?;
+    if changed == 0 { return Err("Note not found".into()); }
+    backup::after_change(&app)
 }
 
 #[tauri::command]
@@ -384,7 +391,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note, can_install_update, csv_io::export_fragrances_csv, csv_io::import_fragrances_csv, csv_io::export_notes_csv, csv_io::import_notes_csv])
+        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note, can_install_update, backup::get_backup_folder, backup::set_backup_folder, csv_io::export_fragrances_csv, csv_io::import_fragrances_csv, csv_io::export_notes_csv, csv_io::import_notes_csv])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

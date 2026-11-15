@@ -4,7 +4,7 @@ Scentkeep is a desktop journal for your fragrance collection. Record each scent'
 
 You can import and export fragrances and notes as CSV files. Scentkeep also checks for new releases in the app. On Windows, macOS, and Linux AppImage it can install a signed update and restart; for distribution packages on Linux it links to the release page.
 
-On first launch, choose a backup folder. Scentkeep immediately writes `scentkeep-fragrances.csv` and `scentkeep-notes.csv` there, then refreshes both files after each change to fragrances or notes, including CSV imports. Use **Backup folder** on the collection page to change the location. If you choose **Later**, the app asks again the next time it opens. The two files can be imported into a fresh collection to restore the data.
+On first launch, choose a backup folder. Scentkeep immediately writes `scentkeep-fragrances.csv` and `scentkeep-notes.csv` there, then refreshes both files after each change to fragrances or notes, including CSV imports. Open **Settings** to view or change the folder. If you choose **Later**, the app asks again the next time it opens. The two files can be imported into a fresh collection to restore the data.
 
 ## Install
 
