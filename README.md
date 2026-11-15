@@ -1,4 +1,23 @@
-# Tauri + SvelteKit + TypeScript
+# Scentkeep
+
+Scentkeep is a desktop journal for your fragrance collection. Record each scent's brand, collection, year, perfumer, description, rating, and top, heart, and base notes. Browse or search your collection, maintain a catalogue of perfume notes, and attach image links to notes. Your collection is stored locally on your computer.
+
+You can import and export fragrances and notes as CSV files. Scentkeep also checks for new releases in the app. On Windows, macOS, and Linux AppImage it can install a signed update and restart; for distribution packages on Linux it links to the release page.
+
+## Install
+
+Download the latest version from [GitHub Releases](https://github.com/reaperhound/scentkeep/releases/latest), then choose the file for your system:
+
+| System | Download | Install |
+| --- | --- | --- |
+| Windows | `.exe` or `.msi` | Open the installer and follow its prompts. |
+| macOS | `.dmg` | Open the disk image and drag Scentkeep to Applications. The universal build supports Intel and Apple silicon. |
+| Arch Linux | `.pkg.tar.zst` | Run `sudo pacman -U ./scentkeep-*.pkg.tar.zst` in the download directory. |
+| Debian or Ubuntu | `.deb` | Run `sudo apt install ./scentkeep_*_amd64.deb` in the download directory. |
+| Fedora | `.rpm` | Run `sudo dnf install ./scentkeep-*.rpm` in the download directory. |
+| Other Linux distributions | `.AppImage` | Run `chmod +x ./scentkeep_*.AppImage`, then open the file. |
+
+Windows and macOS installers are currently unsigned by their respective platform certificate authorities, so your operating system may ask you to confirm that you want to open them.
 
 ## CSV import and export
 
@@ -8,23 +27,13 @@ Fragrance CSV columns are `collection,name,brand,year,audience,description,top_n
 
 Import validates the whole file before saving anything. Fragrances with the same brand and name, or notes with the same name, are skipped regardless of case or surrounding spaces. The result lists each skipped duplicate and its CSV row number.
 
-This template should help get you started developing with Tauri, SvelteKit and TypeScript in Vite.
+## Development
 
-## Recommended IDE Setup
+The app uses Tauri 2, SvelteKit, TypeScript, and Rust. Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform, then run:
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer).
+```sh
+bun install
+bun run tauri dev
+```
 
-## Releases
-
-The [release workflow](.github/workflows/release.yml) builds Windows (`.exe` and `.msi`), Linux (`.deb` and `.AppImage`), and universal macOS (`.dmg`) installers when a `v*` tag is pushed.
-
-1. Set the same version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
-2. Commit and push those version changes.
-3. Tag that commit and push the tag, for example:
-
-   ```sh
-   git tag v0.2.0
-   git push origin main v0.2.0
-   ```
-
-The workflow checks that all three versions match the tag, then publishes the installers to the corresponding GitHub Release. macOS builds are unsigned; distributing without Gatekeeper warnings requires Apple code signing and notarization. Windows builds are unsigned and may trigger SmartScreen warnings.
+Release builds use npm. See [RELEASING.md](RELEASING.md) for versioning and publishing steps.
