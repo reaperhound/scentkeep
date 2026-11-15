@@ -1,7 +1,7 @@
 use super::*;
 use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 
-const FRAGRANCE_HEADERS: [&str; 19] = [
+const FRAGRANCE_HEADERS: [&str; 20] = [
     "collection",
     "name",
     "brand",
@@ -21,6 +21,7 @@ const FRAGRANCE_HEADERS: [&str; 19] = [
     "favourite",
     "price_bought",
     "current_price",
+    "concentration",
 ];
 const NOTE_HEADERS: [&str; 2] = ["name", "image_url"];
 
@@ -58,6 +59,8 @@ struct FragranceRow {
     price_bought: Option<f64>,
     #[serde(default)]
     current_price: Option<f64>,
+    #[serde(default)]
+    concentration: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -85,6 +88,7 @@ impl TryFrom<FragranceRow> for Fragrance {
             brand: row.brand,
             year: row.year,
             audience: row.audience,
+            concentration: row.concentration,
             description: row.description,
             top_notes: notes_from_cell(&row.top_notes)?,
             heart_notes: notes_from_cell(&row.heart_notes)?,
@@ -132,6 +136,7 @@ fn fragrance_csv(conn: &Connection) -> Result<String, String> {
                 brand: fragrance.brand,
                 year: fragrance.year,
                 audience: fragrance.audience,
+                concentration: fragrance.concentration,
                 description: fragrance.description,
                 top_notes: serde_json::to_string(&fragrance.top_notes)
                     .map_err(|e| e.to_string())?,
@@ -157,6 +162,7 @@ fn import_fragrances(conn: &mut Connection, content: &str) -> Result<ImportRepor
         .map_err(|e| format!("Invalid CSV header: {e}"))?
         .clone();
     if headers.len() == 13 { validate_headers(&headers, &FRAGRANCE_HEADERS[..13])?; }
+    else if headers.len() == 19 { validate_headers(&headers, &FRAGRANCE_HEADERS[..19])?; }
     else { validate_headers(&headers, &FRAGRANCE_HEADERS)?; }
     let mut incoming = Vec::new();
     for (index, row) in reader.deserialize::<FragranceRow>().enumerate() {
@@ -329,7 +335,7 @@ mod tests {
             perfumer TEXT, bottle_rating REAL, rating_count INTEGER, image_url TEXT,
             shelf TEXT NOT NULL DEFAULT 'Collection', bottles_owned INTEGER NOT NULL DEFAULT 0,
             bottles_finished INTEGER NOT NULL DEFAULT 0, favourite INTEGER NOT NULL DEFAULT 0,
-            price_bought REAL, current_price REAL
+            price_bought REAL, current_price REAL, concentration TEXT NOT NULL DEFAULT ''
         ); CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL);").unwrap();
         conn
     }

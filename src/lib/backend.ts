@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 export type Fragrance = {
   id?: number; collection: string; name: string; brand: string; year: number;
-  audience: string; description: string; topNotes: string[]; heartNotes: string[];
+  audience: string; concentration: string; description: string; topNotes: string[]; heartNotes: string[];
   baseNotes: string[]; perfumer: string; bottleRating: number | null;
   ratingCount: number | null; imageUrl: string;
   shelf: 'Collection' | 'Wishlist' | 'Empties'; bottlesOwned: number; bottlesFinished: number; favourite: boolean; priceBought: number | null; currentPrice: number | null;
