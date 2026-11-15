@@ -17,6 +17,10 @@
   let selectedId = $state<number | null>(null);
   let noteImages = $state<NoteImage[]>([]);
   let noteSearch = $state('');
+  let newNoteName = $state('');
+  let editingNote = $state('');
+  let editedNoteName = $state('');
+  let deletingNote = $state('');
   let uploadingNote = $state('');
   let error = $state('');
   let success = $state('');
@@ -30,7 +34,7 @@
     { value: 'Men', icon: '♂', label: 'Men' },
     { value: 'Unisex', icon: '⚥', label: 'Unisex' }
   ];
-  const allNotes = $derived(Array.from(new Set(entries.flatMap((item) => [...item.topNotes, ...item.heartNotes, ...item.baseNotes].map((note) => note.trim()).filter(Boolean).map((note) => note.toLocaleLowerCase())))).map((key) => entries.flatMap((item) => [...item.topNotes, ...item.heartNotes, ...item.baseNotes]).find((note) => note.trim().toLocaleLowerCase() === key)!.trim()).sort((a, b) => a.localeCompare(b)));
+  const allNotes = $derived(noteImages.map((note) => note.name).sort((a, b) => a.localeCompare(b)));
   const visibleNotes = $derived(allNotes.filter((note) => note.toLocaleLowerCase().includes(noteSearch.toLocaleLowerCase())));
   const selectedFragrance = $derived(entries.find((item) => item.id === selectedId));
   const visibleEntries = $derived(entries.filter((item) => `${item.name} ${item.brand} ${item.collection}`.toLowerCase().includes(search.toLowerCase())));
@@ -41,6 +45,37 @@
     catch (e) { error = String(e); }
   });
 
+  async function refreshNotesAndFragrances() {
+    entries = await invoke<Fragrance[]>('list_fragrances');
+    noteImages = await invoke<NoteImage[]>('list_note_images');
+  }
+  async function createNote() {
+    error = ''; success = '';
+    try {
+      await invoke('create_note', { name: newNoteName });
+      noteImages = await invoke<NoteImage[]>('list_note_images');
+      success = `${newNoteName.trim()} added to your notes.`;
+      newNoteName = '';
+    } catch (e) { error = String(e); }
+  }
+  async function renameNote(oldName: string) {
+    error = ''; success = '';
+    try {
+      await invoke('rename_note', { oldName, newName: editedNoteName });
+      await refreshNotesAndFragrances();
+      success = `${oldName} renamed to ${editedNoteName.trim()}.`;
+      editingNote = ''; editedNoteName = '';
+    } catch (e) { error = String(e); }
+  }
+  async function deleteNote(name: string) {
+    error = ''; success = '';
+    try {
+      await invoke('delete_note', { name });
+      await refreshNotesAndFragrances();
+      success = `${name} deleted from your notes and fragrances.`;
+      deletingNote = '';
+    } catch (e) { error = String(e); }
+  }
   function imageFor(note: string) {
     return noteImages.find((image) => image.name.toLocaleLowerCase() === note.toLocaleLowerCase())?.imageDataUrl;
   }
@@ -125,7 +160,7 @@
     try {
       if (fragrance.id === undefined) await invoke<number>('save_fragrance', { fragrance });
       else await invoke('update_fragrance', { fragrance });
-      entries = await invoke<Fragrance[]>('list_fragrances');
+      await refreshNotesAndFragrances();
       const wasEditing = fragrance.id !== undefined;
       fragrance = blank(); noteInputs = { topNotes: '', heartNotes: '', baseNotes: '' };
       step = 0; view = 'library'; success = wasEditing ? 'Fragrance updated.' : 'Fragrance saved to your collection.';
@@ -196,11 +231,12 @@
       <div class="page-content">
         <div class="heading"><div><div class="eyebrow">YOUR SCENT INDEX</div><h1>Perfume notes<span class="heading-dot">.</span></h1><p>See every note in your collection and give it an image.</p></div><div class="step-count">{allNotes.length} NOTES</div></div>
         {#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error" role="alert">{error}</div>{/if}
+        <form class="new-note-form" onsubmit={(event) => { event.preventDefault(); createNote(); }}><input aria-label="New note name" placeholder="Add a new perfume note..." bind:value={newNoteName} /><button type="submit" disabled={!newNoteName.trim()}>+ Add note</button></form>
         <div class="library-toolbar"><div class="search-box">⌕ <input aria-label="Search notes" placeholder="Search perfume notes..." bind:value={noteSearch} /></div><span>{visibleNotes.length} {visibleNotes.length === 1 ? 'note' : 'notes'}</span></div>
         {#if visibleNotes.length === 0}
-          <div class="empty-state"><div>◈</div><h2>{allNotes.length === 0 ? 'No notes in your collection yet' : 'No notes found'}</h2><p>{allNotes.length === 0 ? 'Add notes to a fragrance and they will appear here.' : 'Try another search term.'}</p>{#if allNotes.length === 0}<button class="primary-button" onclick={startNew}>Add a fragrance →</button>{/if}</div>
+          <div class="empty-state"><div>◈</div><h2>{allNotes.length === 0 ? 'No notes in your collection yet' : 'No notes found'}</h2><p>{allNotes.length === 0 ? 'Add a note above, or add notes to a fragrance.' : 'Try another search term.'}</p>{#if allNotes.length === 0}<button class="primary-button" onclick={startNew}>Add a fragrance →</button>{/if}</div>
         {:else}
-          <div class="notes-grid">{#each visibleNotes as note}<article class="note-card"><div class="note-art">{#if imageFor(note)}<img src={imageFor(note)} alt={note} />{:else}<span>✧</span>{/if}</div><div class="note-card-body"><h2>{note}</h2><p>Used in {entries.filter((item) => [...item.topNotes, ...item.heartNotes, ...item.baseNotes].some((value) => value.toLocaleLowerCase() === note.toLocaleLowerCase())).length} fragrances</p><div class="note-card-actions"><label class="image-pick">{uploadingNote === note ? 'Saving…' : imageFor(note) ? 'Change image' : '+ Add image'}<input type="file" accept="image/*" disabled={uploadingNote === note} onchange={(event) => setNoteImage(note, event)} /></label>{#if imageFor(note)}<button onclick={() => removeNoteImage(note)}>Remove</button>{/if}</div></div></article>{/each}</div>
+          <div class="notes-grid">{#each visibleNotes as note}<article class="note-card"><div class="note-art">{#if imageFor(note)}<img src={imageFor(note)} alt={note} />{:else}<span>✧</span>{/if}</div><div class="note-card-body">{#if editingNote === note}<form class="rename-note-form" onsubmit={(event) => { event.preventDefault(); renameNote(note); }}><input aria-label={`Rename ${note}`} bind:value={editedNoteName} /><button type="submit" disabled={!editedNoteName.trim()}>Save</button><button type="button" onclick={() => editingNote = ''}>Cancel</button></form>{:else}<h2>{note}</h2>{/if}<p>Used in {entries.filter((item) => [...item.topNotes, ...item.heartNotes, ...item.baseNotes].some((value) => value.toLocaleLowerCase() === note.toLocaleLowerCase())).length} fragrances</p><div class="note-card-actions"><label class="image-pick">{uploadingNote === note ? 'Saving…' : imageFor(note) ? 'Change image' : '+ Add image'}<input type="file" accept="image/*" disabled={uploadingNote === note} onchange={(event) => setNoteImage(note, event)} /></label>{#if imageFor(note)}<button onclick={() => removeNoteImage(note)}>Remove image</button>{/if}</div><div class="note-manage-actions">{#if deletingNote === note}<span>Delete this note from all fragrances?</span><button class="danger" onclick={() => deleteNote(note)}>Yes, delete</button><button onclick={() => deletingNote = ''}>Cancel</button>{:else}<button onclick={() => { editingNote = note; editedNoteName = note; deletingNote = ''; }}>Rename</button><button class="danger" onclick={() => { deletingNote = note; editingNote = ''; }}>Delete note</button>{/if}</div></div></article>{/each}</div>
         {/if}
       </div>
     {:else}
@@ -215,4 +251,5 @@
   .card-actions{border-top:1px solid #edf2f7;padding:11px 19px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.card-actions button{border:0;background:transparent;color:#8295aa;font-size:11px;font-weight:700;padding:4px 0}.card-actions .view-action{color:#3789e9;margin-right:auto}.card-actions .edit-action{color:#6f88a5;margin-right:0}.card-actions .delete-action{color:#d96677}.delete-prompt{width:100%;font-size:11px;color:#8d6f78}
   .notes-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:18px}.note-card{background:white;border:1px solid #e5edf6;border-radius:13px;overflow:hidden}.note-art{height:155px;background:linear-gradient(135deg,#eff7ff,#f8f2fa);display:grid;place-items:center;color:#a5c7ed;font-size:56px}.note-art img{width:100%;height:100%;object-fit:cover}.note-card-body{padding:16px}.note-card-body h2{font-family:Georgia,serif;font-size:19px;font-weight:500;margin:0 0 4px}.note-card-body p{color:#9aaec3;font-size:11px;margin:0 0 15px}.note-card-actions{border-top:1px solid #edf2f7;padding-top:12px;display:flex;align-items:center;justify-content:space-between;gap:7px}.image-pick{position:relative;overflow:hidden;color:#3789e9;font-size:11px;font-weight:750;cursor:pointer}.image-pick input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}.note-card-actions button{background:none;border:0;color:#d56877;font-size:11px;padding:0}
   .detail-page{max-width:1120px}.detail-back{border:0;background:none;color:#658fbd;font-size:12px;font-weight:700;padding:0;margin-bottom:27px}.detail-layout{display:grid;grid-template-columns:minmax(250px,350px) minmax(0,1fr);gap:48px}.detail-left{min-width:0}.detail-image{height:390px;border:1px solid #e5edf6;border-radius:16px;background:linear-gradient(145deg,#eff7ff,#f7f0f8);display:grid;place-items:center;overflow:hidden}.detail-image img{width:100%;height:100%;object-fit:contain;padding:20px}.detail-placeholder{display:flex;flex-direction:column;align-items:center;gap:9px;color:#aac7e9}.detail-placeholder span{font-size:110px;line-height:1}.detail-placeholder small{letter-spacing:2px;font-size:9px;font-weight:800}.detail-image-caption{text-align:center;color:#9aabc0;font-size:11px;margin:13px 0 22px}.detail-edit{width:100%;border:1px solid #d9e8f8;background:#fff;color:#4c90df;border-radius:9px;padding:12px;font-weight:700;font-size:12px}.detail-main{min-width:0;padding-top:8px}.detail-kicker{font-size:11px;color:#5798e0;font-weight:800;letter-spacing:1.8px;text-transform:uppercase;margin-bottom:8px}.detail-main h1{font-size:42px;margin-bottom:4px}.detail-brand{font-size:19px;color:#899fb9}.year-pill{display:inline-block;margin-left:10px;background:#edf3f9;color:#8498af;border-radius:6px;padding:4px 7px;vertical-align:middle;font-size:11px}.audience-pill{display:inline-block;border-radius:20px;background:#eaf4ff;color:#498ddd;padding:6px 12px;margin-top:16px;font-size:11px;font-weight:750}.detail-description{line-height:1.75;color:#71869f;margin:24px 0 30px;white-space:pre-wrap}.detail-section{border-top:1px solid #e6eef7;padding-top:23px;margin-top:26px}.detail-section-title{display:flex;align-items:center;gap:10px;margin-bottom:19px}.detail-section-title>span{width:29px;height:29px;border-radius:8px;background:#eaf4ff;color:#4b91e8;display:grid;place-items:center;font-size:17px}.detail-section-title h2{font-family:Georgia,serif;font-size:21px;font-weight:500;margin:0}.pyramid-row{padding:13px 0 20px;border-bottom:1px solid #edf2f7}.pyramid-label{font-size:10px;text-transform:uppercase;letter-spacing:1.4px;font-weight:800;color:#8498ae;display:flex;align-items:center;gap:8px;margin-bottom:12px}.pyramid-label>span{color:#5ca0ee;font-size:18px}.pyramid-notes{display:flex;flex-wrap:wrap;gap:15px}.pyramid-note{display:flex;align-items:center;gap:7px;color:#438ad7;font-size:12px;font-weight:650}.pyramid-note-image{width:30px;height:30px;border-radius:50%;background:#e9f3ff;display:grid;place-items:center;overflow:hidden;color:#8dbcec}.pyramid-note-image img{width:100%;height:100%;object-fit:cover}.no-notes{font-size:11px;color:#bdcad8}.detail-meta{display:grid;grid-template-columns:1fr 1fr;gap:25px;margin-top:32px}.detail-meta section{border:1px solid #e6edf7;border-radius:12px;background:white;padding:19px}.detail-meta .detail-section-title{margin-bottom:10px}.detail-meta .detail-section-title h2{font-size:18px}.detail-meta p{color:#6797cc;margin:0;font-size:13px}.detail-rating strong{font-size:30px;color:#48ad8b}.detail-rating span{font-size:12px;color:#a5b5c5;margin-left:4px}.rating-bar{height:6px;background:#e7f4f0;border-radius:5px;margin:10px 0 6px;overflow:hidden}.rating-bar div{height:100%;background:#63c6a6;border-radius:5px}.detail-meta small{color:#a0afbf;font-size:10px}@media(max-width:850px){.detail-layout{grid-template-columns:1fr;gap:25px}.detail-image{height:300px}.detail-left{max-width:500px;width:100%;margin:auto}.detail-meta{grid-template-columns:1fr 1fr}}@media(max-width:550px){.detail-meta{grid-template-columns:1fr}.detail-main h1{font-size:34px}}
+  .new-note-form{display:flex;gap:10px;background:#fff;border:1px solid #e3edf7;border-radius:12px;padding:13px;margin-bottom:23px}.new-note-form input,.rename-note-form input{border:1px solid #dae5f1;border-radius:7px;padding:11px 12px;outline:none;min-width:0;flex:1}.new-note-form input:focus,.rename-note-form input:focus{border-color:#4d97ee}.new-note-form button,.rename-note-form button[type=submit]{border:0;border-radius:7px;background:#448ff0;color:white;font-size:11px;font-weight:750;padding:0 17px}.new-note-form button:disabled,.rename-note-form button:disabled{opacity:.55}.rename-note-form{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}.rename-note-form input{width:100%;flex-basis:100%}.rename-note-form button{border:0;background:transparent;color:#7f96ae;font-size:11px;padding:6px}.note-manage-actions{display:flex;gap:12px;flex-wrap:wrap;border-top:1px solid #edf2f7;margin-top:12px;padding-top:11px;align-items:center}.note-manage-actions span{font-size:10px;color:#9c7780;width:100%}.note-manage-actions button{border:0;background:transparent;padding:0;color:#6f92b8;font-size:11px;font-weight:700}.note-manage-actions button.danger{color:#d56877}
 </style>

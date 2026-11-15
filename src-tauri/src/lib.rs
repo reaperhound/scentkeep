@@ -136,12 +136,102 @@ struct NoteImage {
 #[tauri::command]
 fn list_note_images(app: tauri::AppHandle) -> Result<Vec<NoteImage>, String> {
     let conn = database(&app)?;
+    // Existing fragrances predate the note catalogue. Bring their notes in without
+    // replacing any images already assigned to those notes.
+    let mut notes = Vec::new();
+    {
+        let mut fragrances = conn.prepare("SELECT top_notes, heart_notes, base_notes FROM fragrances")
+            .map_err(|e| e.to_string())?;
+        let rows = fragrances.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (top, heart, base) = row.map_err(|e| e.to_string())?;
+            for json in [top, heart, base] {
+                let values: Vec<String> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+                notes.extend(values);
+            }
+        }
+    }
+    for note in notes {
+        if !note.trim().is_empty() {
+            conn.execute("INSERT OR IGNORE INTO note_images (name, image_data_url) VALUES (?1, '')", [note.trim()])
+                .map_err(|e| e.to_string())?;
+        }
+    }
     let mut statement = conn.prepare("SELECT name, image_data_url FROM note_images")
         .map_err(|e| e.to_string())?;
     let rows = statement.query_map([], |row| Ok(NoteImage {
         name: row.get(0)?, image_data_url: row.get(1)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_note(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() { return Err("Enter a note name".into()); }
+    let conn = database(&app)?;
+    conn.execute("INSERT INTO note_images (name, image_data_url) VALUES (?1, '')", [name])
+        .map_err(|e| if e.to_string().contains("UNIQUE") { "That note already exists".into() } else { e.to_string() })?;
+    Ok(())
+}
+
+fn rewrite_fragrance_notes(conn: &Connection, old_name: &str, new_name: Option<&str>) -> Result<(), String> {
+    let mut statement = conn.prepare("SELECT id, top_notes, heart_notes, base_notes FROM fragrances")
+        .map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)))
+        .map_err(|e| e.to_string())?;
+    let mut changed = Vec::new();
+    for row in rows {
+        let (id, top, heart, base) = row.map_err(|e| e.to_string())?;
+        let mut layers = [top, heart, base].map(|json| serde_json::from_str::<Vec<String>>(&json).map_err(|e| e.to_string())).into_iter().collect::<Result<Vec<_>, _>>()?;
+        if layers.iter().any(|layer| layer.iter().any(|note| note.eq_ignore_ascii_case(old_name))) {
+            for layer in &mut layers {
+                if let Some(replacement) = new_name {
+                    for note in layer.iter_mut() {
+                        if note.eq_ignore_ascii_case(old_name) { *note = replacement.to_string(); }
+                    }
+                } else {
+                    layer.retain(|note| !note.eq_ignore_ascii_case(old_name));
+                }
+            }
+            changed.push((id, layers));
+        }
+    }
+    drop(statement);
+    for (id, layers) in changed {
+        conn.execute("UPDATE fragrances SET top_notes = ?1, heart_notes = ?2, base_notes = ?3 WHERE id = ?4", params![
+            serde_json::to_string(&layers[0]).map_err(|e| e.to_string())?,
+            serde_json::to_string(&layers[1]).map_err(|e| e.to_string())?,
+            serde_json::to_string(&layers[2]).map_err(|e| e.to_string())?, id
+        ]).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn rename_note(app: tauri::AppHandle, old_name: String, new_name: String) -> Result<(), String> {
+    let old_name = old_name.trim();
+    let new_name = new_name.trim();
+    if new_name.is_empty() { return Err("Enter a note name".into()); }
+    let mut conn = database(&app)?;
+    let transaction = conn.transaction().map_err(|e| e.to_string())?;
+    let changed = transaction.execute("UPDATE note_images SET name = ?1 WHERE name = ?2", params![new_name, old_name])
+        .map_err(|e| if e.to_string().contains("UNIQUE") { "That note already exists".into() } else { e.to_string() })?;
+    if changed == 0 { return Err("Note not found".into()); }
+    rewrite_fragrance_notes(&transaction, old_name, Some(new_name))?;
+    transaction.commit().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_note(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    let mut conn = database(&app)?;
+    let transaction = conn.transaction().map_err(|e| e.to_string())?;
+    let changed = transaction.execute("DELETE FROM note_images WHERE name = ?1", [name.trim()])
+        .map_err(|e| e.to_string())?;
+    if changed == 0 { return Err("Note not found".into()); }
+    rewrite_fragrance_notes(&transaction, name.trim(), None)?;
+    transaction.commit().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -162,7 +252,7 @@ fn set_note_image(app: tauri::AppHandle, name: String, image_data_url: String) -
 #[tauri::command]
 fn remove_note_image(app: tauri::AppHandle, name: String) -> Result<(), String> {
     let conn = database(&app)?;
-    conn.execute("DELETE FROM note_images WHERE name = ?1", [name.trim()]).map_err(|e| e.to_string())?;
+    conn.execute("UPDATE note_images SET image_data_url = '' WHERE name = ?1", [name.trim()]).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -170,7 +260,30 @@ fn remove_note_image(app: tauri::AppHandle, name: String) -> Result<(), String> 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image])
+        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renaming_and_deleting_notes_updates_fragrance_layers() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE fragrances (id INTEGER PRIMARY KEY, top_notes TEXT, heart_notes TEXT, base_notes TEXT);
+            INSERT INTO fragrances VALUES (1, '[\"Rose\",\"Apple\"]', '[\"rose\"]', '[\"Musk\"]');").unwrap();
+
+        rewrite_fragrance_notes(&conn, "rose", Some("Rose absolute")).unwrap();
+        let layers: (String, String, String) = conn.query_row("SELECT top_notes, heart_notes, base_notes FROM fragrances WHERE id = 1", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+        assert_eq!(layers.0, r#"["Rose absolute","Apple"]"#);
+        assert_eq!(layers.1, r#"["Rose absolute"]"#);
+        assert_eq!(layers.2, r#"["Musk"]"#);
+
+        rewrite_fragrance_notes(&conn, "Rose absolute", None).unwrap();
+        let layers: (String, String) = conn.query_row("SELECT top_notes, heart_notes FROM fragrances WHERE id = 1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(layers.0, r#"["Apple"]"#);
+        assert_eq!(layers.1, "[]");
+    }
 }
