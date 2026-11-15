@@ -62,6 +62,17 @@ fn validate_fragrance(fragrance: &Fragrance) -> Result<(), String> {
     if fragrance.rating_count.is_some_and(|count| count < 0) {
         return Err("Rating count cannot be negative".into());
     }
+    if !fragrance.image_url.trim().is_empty() {
+        validate_image_url(&fragrance.image_url)?;
+    }
+    Ok(())
+}
+
+fn validate_image_url(value: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(value.trim()).map_err(|_| "Enter a valid image link".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err("Image links must start with http:// or https://".into());
+    }
     Ok(())
 }
 
@@ -130,7 +141,7 @@ fn list_fragrances(app: tauri::AppHandle) -> Result<Vec<Fragrance>, String> {
 #[serde(rename_all = "camelCase")]
 struct NoteImage {
     name: String,
-    image_data_url: String,
+    image_url: String,
 }
 
 #[tauri::command]
@@ -161,7 +172,7 @@ fn list_note_images(app: tauri::AppHandle) -> Result<Vec<NoteImage>, String> {
     let mut statement = conn.prepare("SELECT name, image_data_url FROM note_images")
         .map_err(|e| e.to_string())?;
     let rows = statement.query_map([], |row| Ok(NoteImage {
-        name: row.get(0)?, image_data_url: row.get(1)?,
+        name: row.get(0)?, image_url: row.get(1)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
 }
@@ -235,16 +246,13 @@ fn delete_note(app: tauri::AppHandle, name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_note_image(app: tauri::AppHandle, name: String, image_data_url: String) -> Result<(), String> {
+fn set_note_image(app: tauri::AppHandle, name: String, image_url: String) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() { return Err("Note name is required".into()); }
-    if !image_data_url.starts_with("data:image/") || !image_data_url.contains(";base64,") {
-        return Err("Select a valid image file".into());
-    }
-    if image_data_url.len() > 4_000_000 { return Err("Image is too large".into()); }
+    validate_image_url(&image_url)?;
     let conn = database(&app)?;
     conn.execute("INSERT INTO note_images (name, image_data_url) VALUES (?1, ?2)
-        ON CONFLICT(name) DO UPDATE SET image_data_url = excluded.image_data_url", params![name, image_data_url])
+        ON CONFLICT(name) DO UPDATE SET image_data_url = excluded.image_data_url", params![name, image_url.trim()])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -285,5 +293,14 @@ mod tests {
         let layers: (String, String) = conn.query_row("SELECT top_notes, heart_notes FROM fragrances WHERE id = 1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
         assert_eq!(layers.0, r#"["Apple"]"#);
         assert_eq!(layers.1, "[]");
+    }
+
+    #[test]
+    fn image_urls_require_web_links() {
+        assert!(validate_image_url("https://example.com/image.jpg").is_ok());
+        assert!(validate_image_url("http://example.com/image.png").is_ok());
+        assert!(validate_image_url("data:image/png;base64,abc").is_err());
+        assert!(validate_image_url("file:///tmp/image.png").is_err());
+        assert!(validate_image_url("not a link").is_err());
     }
 }
