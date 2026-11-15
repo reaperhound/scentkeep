@@ -77,11 +77,28 @@ fn validate_image_url(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_unique_fragrance(conn: &Connection, fragrance: &Fragrance, except_id: Option<i64>) -> Result<(), String> {
+    let name = fragrance.name.trim().to_lowercase();
+    let brand = fragrance.brand.trim().to_lowercase();
+    let mut statement = conn.prepare("SELECT id, name, brand FROM fragrances").map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let (id, saved_name, saved_brand) = row.map_err(|e| e.to_string())?;
+        if Some(id) != except_id && saved_name.trim().to_lowercase() == name && saved_brand.trim().to_lowercase() == brand {
+            return Err("This fragrance is already in your collection".into());
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn save_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<i64, String> {
     validate_fragrance(&fragrance)?;
-    let conn = database(&app)?;
-    conn.execute("INSERT INTO fragrances (collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url)
+    let mut conn = database(&app)?;
+    let transaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    ensure_unique_fragrance(&transaction, &fragrance, None)?;
+    transaction.execute("INSERT INTO fragrances (collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url)
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)", params![
         fragrance.collection.trim(), fragrance.name.trim(), fragrance.brand.trim(), fragrance.year,
         fragrance.audience, fragrance.description.trim(),
@@ -90,15 +107,19 @@ fn save_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<i64, St
         serde_json::to_string(&fragrance.base_notes).map_err(|e| e.to_string())?,
         fragrance.perfumer.trim(), fragrance.bottle_rating, fragrance.rating_count, fragrance.image_url.trim()
     ]).map_err(|e| e.to_string())?;
-    Ok(conn.last_insert_rowid())
+    let id = transaction.last_insert_rowid();
+    transaction.commit().map_err(|e| e.to_string())?;
+    Ok(id)
 }
 
 #[tauri::command]
 fn update_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<(), String> {
     validate_fragrance(&fragrance)?;
     let id = fragrance.id.ok_or("Missing fragrance ID")?;
-    let conn = database(&app)?;
-    let changed = conn.execute("UPDATE fragrances SET collection = ?1, name = ?2, brand = ?3, year = ?4, audience = ?5, description = ?6, top_notes = ?7, heart_notes = ?8, base_notes = ?9, perfumer = ?10, bottle_rating = ?11, rating_count = ?12, image_url = ?13 WHERE id = ?14", params![
+    let mut conn = database(&app)?;
+    let transaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    ensure_unique_fragrance(&transaction, &fragrance, Some(id))?;
+    let changed = transaction.execute("UPDATE fragrances SET collection = ?1, name = ?2, brand = ?3, year = ?4, audience = ?5, description = ?6, top_notes = ?7, heart_notes = ?8, base_notes = ?9, perfumer = ?10, bottle_rating = ?11, rating_count = ?12, image_url = ?13 WHERE id = ?14", params![
         fragrance.collection.trim(), fragrance.name.trim(), fragrance.brand.trim(), fragrance.year,
         fragrance.audience, fragrance.description.trim(),
         serde_json::to_string(&fragrance.top_notes).map_err(|e| e.to_string())?,
@@ -107,7 +128,7 @@ fn update_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<(), S
         fragrance.perfumer.trim(), fragrance.bottle_rating, fragrance.rating_count, fragrance.image_url.trim(), id
     ]).map_err(|e| e.to_string())?;
     if changed == 0 { return Err("Fragrance not found".into()); }
-    Ok(())
+    transaction.commit().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -198,9 +219,24 @@ fn load_note_images(conn: &Connection) -> Result<Vec<NoteImage>, String> {
 fn create_note(app: tauri::AppHandle, name: String) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() { return Err("Enter a note name".into()); }
-    let conn = database(&app)?;
-    conn.execute("INSERT INTO note_images (name, image_data_url) VALUES (?1, '')", [name])
+    let mut conn = database(&app)?;
+    let transaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    ensure_unique_note(&transaction, name, None)?;
+    transaction.execute("INSERT INTO note_images (name, image_data_url) VALUES (?1, '')", [name])
         .map_err(|e| if e.to_string().contains("UNIQUE") { "That note already exists".into() } else { e.to_string() })?;
+    transaction.commit().map_err(|e| e.to_string())
+}
+
+fn ensure_unique_note(conn: &Connection, name: &str, except_name: Option<&str>) -> Result<(), String> {
+    let name = name.trim().to_lowercase();
+    let mut statement = conn.prepare("SELECT name FROM note_images").map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+    for row in rows {
+        let saved_name = row.map_err(|e| e.to_string())?;
+        if saved_name.trim().to_lowercase() == name && !except_name.is_some_and(|old| saved_name.eq_ignore_ascii_case(old.trim())) {
+            return Err("That note already exists".into());
+        }
+    }
     Ok(())
 }
 
@@ -244,6 +280,7 @@ fn rename_note(app: tauri::AppHandle, old_name: String, new_name: String) -> Res
     if new_name.is_empty() { return Err("Enter a note name".into()); }
     let mut conn = database(&app)?;
     let transaction = conn.transaction().map_err(|e| e.to_string())?;
+    ensure_unique_note(&transaction, new_name, Some(old_name))?;
     let changed = transaction.execute("UPDATE note_images SET name = ?1 WHERE name = ?2", params![new_name, old_name])
         .map_err(|e| if e.to_string().contains("UNIQUE") { "That note already exists".into() } else { e.to_string() })?;
     if changed == 0 { return Err("Note not found".into()); }
@@ -268,9 +305,9 @@ fn set_note_image(app: tauri::AppHandle, name: String, image_url: String) -> Res
     if name.is_empty() { return Err("Note name is required".into()); }
     validate_image_url(&image_url)?;
     let conn = database(&app)?;
-    conn.execute("INSERT INTO note_images (name, image_data_url) VALUES (?1, ?2)
-        ON CONFLICT(name) DO UPDATE SET image_data_url = excluded.image_data_url", params![name, image_url.trim()])
+    let changed = conn.execute("UPDATE note_images SET image_data_url = ?2 WHERE name = ?1", params![name, image_url.trim()])
         .map_err(|e| e.to_string())?;
+    if changed == 0 { return Err("Note not found".into()); }
     Ok(())
 }
 
@@ -333,5 +370,35 @@ mod tests {
         let notes = load_note_images(&conn).unwrap();
         assert_eq!(notes.iter().find(|note| note.name == "Rose").unwrap().usage_count, 2);
         assert_eq!(notes.iter().find(|note| note.name == "Jasmine").unwrap().usage_count, 0);
+    }
+
+    #[test]
+    fn duplicate_fragrances_match_brand_and_name_but_allow_editing_the_same_row() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE fragrances (id INTEGER PRIMARY KEY, name TEXT, brand TEXT);
+            INSERT INTO fragrances VALUES (1, 'Rose Garden', 'Maison Scent');").unwrap();
+        let mut fragrance = Fragrance {
+            id: None, collection: String::new(), name: " rose garden ".into(), brand: "MAISON SCENT".into(),
+            year: 2024, audience: "Unisex".into(), description: String::new(), top_notes: vec![],
+            heart_notes: vec![], base_notes: vec![], perfumer: String::new(), bottle_rating: None,
+            rating_count: None, image_url: String::new(),
+        };
+
+        assert_eq!(ensure_unique_fragrance(&conn, &fragrance, None).unwrap_err(), "This fragrance is already in your collection");
+        assert!(ensure_unique_fragrance(&conn, &fragrance, Some(1)).is_ok());
+        fragrance.brand = "Another house".into();
+        assert!(ensure_unique_fragrance(&conn, &fragrance, None).is_ok());
+    }
+
+    #[test]
+    fn duplicate_notes_are_case_insensitive_and_renames_exclude_the_original() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE);
+            INSERT INTO note_images VALUES ('Rose');
+            INSERT INTO note_images VALUES ('Jasmine');").unwrap();
+
+        assert_eq!(ensure_unique_note(&conn, " rose ", None).unwrap_err(), "That note already exists");
+        assert_eq!(ensure_unique_note(&conn, "JASMINE", Some("Rose")).unwrap_err(), "That note already exists");
+        assert!(ensure_unique_note(&conn, "rose", Some("Rose")).is_ok());
     }
 }

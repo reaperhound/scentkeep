@@ -23,6 +23,7 @@
   type NoteLayer = 'topNotes' | 'heartNotes' | 'baseNotes';
   let activeNoteInput = $state<NoteLayer | null>(null);
   let highlightedNoteIndex = $state(-1);
+  let duplicateNoteLayer = $state<NoteLayer | null>(null);
   const steps = ['General information', 'Fragrance pyramid', 'Additional details'];
   const categories = [
     { value: 'Women', icon: '♀', label: 'Women' },
@@ -123,10 +124,11 @@
     if (!value) return;
     const note = allNotes.find((name) => name.toLocaleLowerCase() === value.toLocaleLowerCase()) ?? value;
     if (fragrance[kind].some((name) => name.toLocaleLowerCase() === note.toLocaleLowerCase())) {
-      noteInputs[kind] = '';
+      duplicateNoteLayer = kind;
       activeNoteInput = null;
       return;
     }
+    duplicateNoteLayer = null;
     fragrance[kind] = [...fragrance[kind], note];
     noteInputs[kind] = '';
     activeNoteInput = null;
@@ -141,12 +143,21 @@
       error = 'Add a fragrance name and brand to continue.';
       return;
     }
+    if (step === 0 && entries.some((item) =>
+      item.id !== fragrance.id &&
+      item.name.trim().toLocaleLowerCase() === fragrance.name.trim().toLocaleLowerCase() &&
+      item.brand.trim().toLocaleLowerCase() === fragrance.brand.trim().toLocaleLowerCase()
+    )) {
+      error = 'This fragrance is already in your collection.';
+      return;
+    }
     if (step < 2) step += 1;
   }
   function startNew() {
     fragrance = blank();
     noteInputs = { topNotes: '', heartNotes: '', baseNotes: '' };
     activeNoteInput = null;
+    duplicateNoteLayer = null;
     step = 0; view = 'form'; error = ''; success = '';
   }
   function openDetail(item: Fragrance) {
@@ -156,6 +167,7 @@
     fragrance = { ...item, topNotes: [...item.topNotes], heartNotes: [...item.heartNotes], baseNotes: [...item.baseNotes] };
     noteInputs = { topNotes: '', heartNotes: '', baseNotes: '' };
     activeNoteInput = null;
+    duplicateNoteLayer = null;
     step = 0; view = 'form'; error = ''; success = '';
   }
   async function remove(item: Fragrance) {
@@ -231,7 +243,7 @@
                       placeholder={`e.g. ${group.example}`}
                       bind:value={noteInputs[kind]}
                       onfocus={() => { activeNoteInput = kind; highlightedNoteIndex = -1; }}
-                      oninput={() => { activeNoteInput = kind; highlightedNoteIndex = -1; }}
+                      oninput={() => { activeNoteInput = kind; highlightedNoteIndex = -1; duplicateNoteLayer = null; }}
                       onblur={() => activeNoteInput = null}
                       onkeydown={(event) => handleNoteKeydown(event, kind)}
                     />
@@ -256,6 +268,7 @@
                   </div>
                   <button type="button" onclick={() => addNote(kind)}>+ Add note</button>
                 </div>
+                {#if duplicateNoteLayer === kind}<div class="note-error" role="alert">This note is already in the {group.title.toLowerCase()}.</div>{/if}
                 <div class="note-chips">{#each fragrance[kind] as note, index}<button type="button" title={`Remove ${note}`} onclick={() => removeNote(kind, index)}>{note} <span>×</span></button>{/each}{#if fragrance[kind].length === 0}<span class="empty-hint">No notes added yet</span>{/if}</div>
               </div>
             {/each}
@@ -314,4 +327,5 @@
   .suggestions-heading{padding:7px 10px 5px;color:#9aacc0;font-size:9px;font-weight:800;letter-spacing:1.3px}
   .note-suggestions button{display:block;width:100%;border:0;border-radius:6px;background:transparent;color:#344c69;text-align:left;padding:9px 10px;font-size:12px;font-weight:550;white-space:normal}
   .note-suggestions button:hover,.note-suggestions button.highlighted{background:#eaf3ff;color:#2f80da}
+  .note-error{margin-top:9px;color:#bd405a;font-size:11px}
 </style>
