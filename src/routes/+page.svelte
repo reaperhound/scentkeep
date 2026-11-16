@@ -531,7 +531,7 @@
     {:else if view === 'notes'}
       <div class="page-content">
         <div class="heading"><div><div class="eyebrow">YOUR SCENT INDEX</div><h1>Perfume notes<span class="heading-dot">.</span></h1><p>See every note in your collection and give it an image.</p><p class="note-source-tip">Image tip: When adding a note image link, try Parfumo first if it has a suitable photo; its images are often clearer than Fragrantica’s.</p></div>
-          <div class="csv-actions"><button class="back-button" disabled={csvBusy} onclick={() => noteCsvInput?.click()}><img class="action-icon" src="/import.svg" alt="" />Import CSV</button><button class="back-button" disabled={csvBusy} onclick={() => exportCsv('notes')}><img class="action-icon" src="/export.svg" alt="" />Export CSV</button><input type="file" accept=".csv,.xlsx,.xls,text/csv" bind:this={noteCsvInput} onchange={(event) => importCsv(event, 'notes')} hidden /></div>
+          <div class="csv-actions"><button class="back-button" disabled={csvBusy} onclick={() => noteCsvInput?.click()}><NavIcon name="import" size={18} /><span>Import CSV</span></button><button class="back-button" disabled={csvBusy} onclick={() => exportCsv('notes')}><NavIcon name="export" size={18} /><span>Export CSV</span></button><input type="file" accept=".csv,.xlsx,.xls,text/csv" bind:this={noteCsvInput} onchange={(event) => importCsv(event, 'notes')} hidden /></div>
         </div>
         {#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error" role="alert">{error}</div>{/if}
         {#if csvReport?.kind === 'notes'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'note' : 'notes'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'note' : 'notes'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}
@@ -645,6 +645,7 @@
   .heading .note-source-tip{max-width:640px;margin-top:8px;color:#6b6475;font-size:12px;line-height:1.5}
   .csv-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}
   .csv-actions .back-button,.csv-actions .primary-button{white-space:nowrap;padding:11px 15px}
+  .heading .csv-actions button{display:inline-flex;align-items:center;justify-content:center;gap:8px}
   .csv-actions button:disabled{opacity:.55}
   .import-result{background:#eaf4ff;color:#345577}
   .import-result p{margin:8px 0 4px}
@@ -683,7 +684,6 @@
   .top-actions{margin-left:auto;gap:25px}
   .update-check{border-color:#e8e5e5;color:#171417;border-radius:12px;padding:12px 19px;font-size:12px;font-weight:550}
   .update-check{display:inline-flex;align-items:center;gap:10px}
-  .action-icon{display:inline-block;width:19px;height:19px;object-fit:contain;flex:none}
   .local-badge{color:#171417;font-size:13px}
   .local-badge span{background:#16a34a;width:11px;height:11px;margin-right:9px}
   .avatar{width:45px;height:45px;background:#f1eef1;color:#171417;font-family:Georgia,serif;font-size:20px;font-weight:400}
