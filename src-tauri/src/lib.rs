@@ -400,7 +400,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note, can_install_update, backup::get_backup_folder, backup::set_backup_folder, csv_io::export_fragrances_csv, csv_io::import_fragrances_csv, csv_io::export_notes_csv, csv_io::import_notes_csv, parfumo::parfumo_status, parfumo::open_parfumo_login, parfumo::save_parfumo_session, parfumo::disconnect_parfumo, parfumo::search_parfumo_notes, parfumo::save_parfumo_note])
+        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note, can_install_update, backup::get_backup_folder, backup::set_backup_folder, backup::get_webdav_backup, backup::set_webdav_backup, backup::disconnect_webdav_backup, backup::sync_from_webdav, csv_io::export_fragrances_csv, csv_io::import_fragrances_csv, csv_io::export_notes_csv, csv_io::import_notes_csv, parfumo::parfumo_status, parfumo::open_parfumo_login, parfumo::save_parfumo_session, parfumo::disconnect_parfumo, parfumo::search_parfumo_notes, parfumo::save_parfumo_note])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

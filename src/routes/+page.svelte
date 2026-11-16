@@ -6,7 +6,7 @@
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { check, type Update } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
-  import { backend, type CsvImportReport, type Fragrance, type NoteImage, type ParfumoNote, type ParfumoStatus } from '$lib/backend';
+  import { backend, type CsvImportReport, type Fragrance, type NoteImage, type ParfumoNote, type ParfumoStatus, type WebdavBackup } from '$lib/backend';
   import NavIcon from '$lib/NavIcon.svelte';
 
   const blank = (): Fragrance => ({ collection: '', name: '', brand: '', year: new Date().getFullYear(), audience: 'Unisex', concentration: '', description: '', topNotes: [], heartNotes: [], baseNotes: [], perfumer: '', bottleRating: null, ratingCount: null, imageUrl: '', shelf: 'Collection', bottlesOwned: 0, bottlesFinished: 0, favourite: false, priceBought: null, currentPrice: null });
@@ -60,6 +60,12 @@
   let backupFolder = $state<string | null>(null);
   let backupDialogOpen = $state(false);
   let choosingBackupFolder = $state(false);
+  let webdavBackup = $state<WebdavBackup | null>(null);
+  let webdavUrl = $state('');
+  let webdavUsername = $state('');
+  let webdavPassword = $state('');
+  let webdavBusy = $state(false);
+  let webdavSyncing = $state(false);
   let parfumoStatus = $state<ParfumoStatus | null>(null);
   let parfumoBusy = $state(false);
   let parfumoLoginOpen = $state(false);
@@ -116,7 +122,9 @@
     if (isTauri()) {
       try {
         backupFolder = await backend.getBackupFolder();
-        backupDialogOpen = !backupFolder;
+        webdavBackup = await backend.getWebdavBackup();
+        backupDialogOpen = !backupFolder && !webdavBackup;
+        if (webdavBackup) { webdavUrl = webdavBackup.url; webdavUsername = webdavBackup.username; }
       } catch (e) { error = `Could not load backup settings: ${String(e)}`; }
       canInstallUpdate = await invoke<boolean>('can_install_update');
       try { parfumoStatus = await backend.parfumoStatus(); }
@@ -173,6 +181,45 @@
       error = '';
     } catch (e) { error = `Could not set backup folder: ${String(e)}`; }
     finally { choosingBackupFolder = false; }
+  }
+  async function saveWebdavBackup(event: SubmitEvent) {
+    event.preventDefault();
+    webdavBusy = true;
+    try {
+      webdavBackup = await backend.setWebdavBackup(webdavUrl, webdavUsername, webdavPassword);
+      webdavUrl = webdavBackup.url;
+      webdavUsername = webdavBackup.username;
+      webdavPassword = '';
+      backupDialogOpen = false;
+      success = webdavBackup.needsSync
+        ? 'WebDAV connected. Sync from WebDAV on the collection page before making changes.'
+        : 'WebDAV connected. CSV backups will upload after changes.';
+      error = '';
+    } catch (e) { error = `Could not connect WebDAV backup: ${String(e)}`; }
+    finally { webdavBusy = false; }
+  }
+  async function disconnectWebdavBackup() {
+    webdavBusy = true;
+    try {
+      await backend.disconnectWebdavBackup();
+      webdavBackup = null;
+      webdavPassword = '';
+      success = 'WebDAV backup disconnected.';
+      error = '';
+    } catch (e) { error = `Could not disconnect WebDAV backup: ${String(e)}`; }
+    finally { webdavBusy = false; }
+  }
+  async function syncFromWebdav() {
+    if (webdavSyncing) return;
+    webdavSyncing = true;
+    error = ''; success = '';
+    try {
+      const report = await backend.syncFromWebdav();
+      if (webdavBackup) webdavBackup = { ...webdavBackup, needsSync: false };
+      await refreshNotesAndFragrances();
+      success = `Synced from WebDAV: ${report.fragrancesAdded} fragrances and ${report.notesAdded} notes added; ${report.fragrancesUpdated} fragrances and ${report.notesUpdated} notes updated.`;
+    } catch (e) { error = `Could not sync from WebDAV: ${String(e)}`; }
+    finally { webdavSyncing = false; }
   }
   async function exportCsv(kind: CsvKind) {
     error = ''; success = ''; csvReport = null;
@@ -574,6 +621,17 @@
           <p class="settings-hint">{#if backupFolder}Files: scentkeep-fragrances.csv and scentkeep-notes.csv{:else}Choose a folder to start automatic backups.{/if}</p>
           <button class="primary-button" type="button" disabled={choosingBackupFolder || !isTauri()} onclick={chooseBackupFolder}>{choosingBackupFolder ? 'Choosing…' : backupFolder ? 'Change folder' : 'Choose folder'}</button>
         </section>
+        <section class="settings-card webdav-card" aria-labelledby="webdav-settings-title">
+          <div class="settings-card-header"><div><h2 id="webdav-settings-title">WebDAV backup</h2><p>Upload the same two CSV files to an HTTPS WebDAV folder after every change.</p></div><span class:configured={!!webdavBackup} class="backup-status">{webdavBackup ? 'Connected' : 'Not connected'}</span></div>
+          {#if webdavBackup?.needsSync}<p class="settings-hint">This folder already has backups. Open your collection and select Sync from WebDAV before making changes; uploads are paused until then.</p>{/if}
+          <form class="webdav-form" onsubmit={saveWebdavBackup}>
+            <label class="field">WebDAV folder URL<input type="url" required placeholder="https://cloud.example.com/remote.php/dav/files/you/Scentkeep/" bind:value={webdavUrl} disabled={webdavBusy || !isTauri()} /></label>
+            <label class="field">Username<input required autocomplete="username" bind:value={webdavUsername} disabled={webdavBusy || !isTauri()} /></label>
+            <label class="field">{webdavBackup ? 'New app password' : 'App password'}<input type="password" required autocomplete="new-password" bind:value={webdavPassword} disabled={webdavBusy || !isTauri()} /></label>
+            <p class="settings-hint">Use an existing folder and an app password from your WebDAV provider. The password is stored in your system keyring.</p>
+            <div class="parfumo-actions"><button class="primary-button" type="submit" disabled={webdavBusy || !isTauri()}>{webdavBusy ? 'Connecting…' : webdavBackup ? 'Update connection' : 'Connect WebDAV'}</button>{#if webdavBackup}<button class="parfumo-disconnect-button" type="button" disabled={webdavBusy} onclick={disconnectWebdavBackup}>Disconnect</button>{/if}</div>
+          </form>
+        </section>
         <section class="settings-card parfumo-card" aria-labelledby="parfumo-settings-title">
           <div class="settings-card-header"><div><h2 id="parfumo-settings-title">Parfumo account</h2><p>Sign in on Parfumo and save the browser session for future imports.</p></div><span class:configured={parfumoStatus?.connected} class="backup-status">{parfumoStatus?.connected ? 'Session saved' : 'Not connected'}</span></div>
           <p class="settings-hint">{#if parfumoLoginOpen}After signing in on Parfumo, return here and save the session.{:else if parfumoStatus?.connected}Your session is saved in the system keyring. Open Parfumo to refresh it, or disconnect to remove it.{:else}Open Parfumo and sign in there to connect your account.{/if}</p>
@@ -588,8 +646,9 @@
       <div class="page-content collection-page">
         <div class="heading collection-heading"><div><div class="eyebrow">YOUR FRAGRANCE LIBRARY</div><h1>{activeShelf}</h1><p>A home for every scent worth remembering.</p></div></div>
         {#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error">{error}</div>{/if}
+        {#if webdavBackup?.needsSync}<div class="message import-result" role="status">This WebDAV folder already has backups. Sync them before making changes on this device.</div>{/if}
         {#if csvReport?.kind === 'fragrances'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'fragrance' : 'fragrances'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'fragrance' : 'fragrances'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}
-        <div class="collection-controls"><div class="collection-search"><label class="search-box"><NavIcon name="search" size={18} /><input aria-label="Search fragrances" placeholder="Search fragrances or brands..." bind:value={search} /></label><button class="filter-button" type="button" aria-label={collectionFilter === 'Owned' ? 'Show all fragrances' : 'Show owned fragrances'} title={collectionFilter === 'Owned' ? 'Show all fragrances' : 'Show owned fragrances'} onclick={() => collectionFilter = collectionFilter === 'Owned' ? 'All' : 'Owned'}><NavIcon name="filter" size={18} /><span>Filters</span></button></div><div class="csv-actions"><button class="back-button" disabled={csvBusy} onclick={() => fragranceCsvInput?.click()}><NavIcon name="import" size={18} /><span>Import CSV</span></button><button class="back-button" disabled={csvBusy} onclick={() => exportCsv('fragrances')}><NavIcon name="export" size={18} /><span>Export CSV</span></button><button class="primary-button" onclick={startNew}><NavIcon name="add" size={18} /><span>Add fragrance</span></button><input type="file" accept=".csv,.xlsx,.xls,text/csv" bind:this={fragranceCsvInput} onchange={(event) => importCsv(event, 'fragrances')} hidden /></div></div>
+        <div class="collection-controls"><div class="collection-search"><label class="search-box"><NavIcon name="search" size={18} /><input aria-label="Search fragrances" placeholder="Search fragrances or brands..." bind:value={search} /></label><button class="filter-button" type="button" aria-label={collectionFilter === 'Owned' ? 'Show all fragrances' : 'Show owned fragrances'} title={collectionFilter === 'Owned' ? 'Show all fragrances' : 'Show owned fragrances'} onclick={() => collectionFilter = collectionFilter === 'Owned' ? 'All' : 'Owned'}><NavIcon name="filter" size={18} /><span>Filters</span></button></div><div class="csv-actions">{#if webdavBackup}<button class="back-button" type="button" disabled={webdavSyncing} onclick={syncFromWebdav}><NavIcon name="refresh" size={18} /><span>{webdavSyncing ? 'Syncing…' : 'Sync from WebDAV'}</span></button>{/if}<button class="back-button" disabled={csvBusy} onclick={() => fragranceCsvInput?.click()}><NavIcon name="import" size={18} /><span>Import CSV</span></button><button class="back-button" disabled={csvBusy} onclick={() => exportCsv('fragrances')}><NavIcon name="export" size={18} /><span>Export CSV</span></button><button class="primary-button" onclick={startNew}><NavIcon name="add" size={18} /><span>Add fragrance</span></button><input type="file" accept=".csv,.xlsx,.xls,text/csv" bind:this={fragranceCsvInput} onchange={(event) => importCsv(event, 'fragrances')} hidden /></div></div>
         <div class="collection-subbar"><div class="shelf-filters">{#if activeShelf === 'Collection'}{#each ['All', 'Owned', 'Wishlist', 'Empties'] as filter}<button type="button" class:active={collectionFilter === filter} onclick={() => collectionFilter = filter as typeof collectionFilter}><NavIcon name={filter === 'All' ? 'grid' : filter === 'Owned' ? 'library' : filter === 'Wishlist' ? 'wishlist' : 'empties'} size={18} /><span>{filter}</span><span class="filter-count">{filter === 'All' ? entries.length : filter === 'Owned' ? entries.filter((item) => item.shelf === 'Collection').length : entries.filter((item) => item.shelf === filter).length}</span></button>{/each}{/if}</div><div class="collection-view"><span>{visibleEntries.length} {visibleEntries.length === 1 ? 'fragrance' : 'fragrances'}</span><div class="layout-switch"><button type="button" class:active={collectionLayout === 'grid'} aria-label="Grid view" onclick={() => collectionLayout = 'grid'}><NavIcon name="grid" size={18} /></button><button type="button" class:active={collectionLayout === 'list'} aria-label="List view" onclick={() => collectionLayout = 'list'}><NavIcon name="list" size={18} /></button></div></div></div>
         {#if visibleEntries.length === 0}<div class="empty-state"><div><NavIcon name="bottle" size={48} /></div><h2>{entries.length === 0 ? 'Your collection is waiting' : 'No fragrances found'}</h2><p>{entries.length === 0 ? 'Add your first fragrance to start your scent journal.' : 'Try another search or filter.'}</p>{#if entries.length === 0}<button class="primary-button" onclick={startNew}>Add your first fragrance <NavIcon name="forward" size={18} /></button>{/if}</div>
         {:else}<div class="fragrance-grid" class:list-layout={collectionLayout === 'list'}>{#each visibleEntries as item}<article class="fragrance-card" role="link" tabindex="0" aria-label={`View details for ${item.name}`} onclick={() => openDetail(item)} onkeydown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDetail(item); } }}><div class="fragrance-art">{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<span class="bottle-placeholder">✳</span>{/if}<div class="card-menu-wrap"><button class="card-menu" type="button" aria-label={`Actions for ${item.name}`} aria-expanded={openCardMenuId === item.id} onclick={(event) => { event.stopPropagation(); openCardMenuId = openCardMenuId === item.id ? null : (item.id ?? null); }}>···</button>{#if openCardMenuId === item.id}<div class="card-dropdown" role="menu" aria-label={`Actions for ${item.name}`} onclick={(event) => event.stopPropagation()}><button type="button" role="menuitem" onclick={() => { openCardMenuId = null; startEdit(item); }}>✎ Edit</button><button type="button" role="menuitem" class="delete-action" onclick={() => { openCardMenuId = null; remove(item); }}>♜ Delete</button></div>{/if}</div></div><div class="fragrance-info"><h2>{item.name}</h2><div class="listing-meta"><img class="sex-icon" src={sexIconFor(item.audience)} alt={item.audience} title={item.audience} /><span class="concentration-label">{item.concentration || 'Concentration not set'}</span></div></div></article>{/each}</div>{/if}
@@ -604,12 +663,13 @@
   <div class="dialog-backdrop" role="presentation">
     <dialog open class="profile-dialog" aria-labelledby="backup-title">
       <div class="eyebrow">AUTOMATIC BACKUPS</div>
-      <h2 id="backup-title">Choose a backup folder</h2>
-      <p>After every change, Scentkeep saves your fragrances and notes as two CSV files in this folder.</p>
+      <h2 id="backup-title">Set up automatic backups</h2>
+      <p>After every change, Scentkeep saves your fragrances and notes as two CSV files in a local folder or WebDAV folder.</p>
       {#if backupFolder}<p class="backup-path">Current folder: {backupFolder}</p>{/if}
       {#if error}<div class="message error" role="alert">{error}</div>{/if}
       <div class="dialog-actions">
         <button class="back-button" type="button" onclick={() => backupDialogOpen = false}>Later</button>
+        <button class="back-button" type="button" onclick={() => { backupDialogOpen = false; view = 'settings'; }}>Set up WebDAV</button>
         <button class="primary-button" type="button" disabled={choosingBackupFolder} onclick={chooseBackupFolder}>{choosingBackupFolder ? 'Choosing…' : 'Choose folder'}</button>
       </div>
     </dialog>
@@ -619,6 +679,7 @@
 <style>
   .settings-page{max-width:900px}
   .parfumo-card{margin-top:18px}.parfumo-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.parfumo-actions .primary-button{padding:11px 16px}.parfumo-save-button,.parfumo-disconnect-button{border:1px solid;border-radius:8px;padding:11px 16px;font-size:12px;font-weight:750;background:#fff;transition:background .15s,color .15s,border-color .15s}.parfumo-save-button{border-color:#552044;color:#552044}.parfumo-save-button:hover{background:#f8edf5}.parfumo-disconnect-button{border-color:#d9a9b5;color:#a63450}.parfumo-disconnect-button:hover{background:#fff0f3;border-color:#a63450}.parfumo-actions button:disabled{opacity:.55;cursor:wait}
+  .webdav-card{margin-top:18px}.webdav-form{display:grid;gap:15px}.webdav-form .settings-hint{margin:0}.webdav-form .field{max-width:100%}.webdav-form .field input{min-width:0}
   .settings-card{border:1px solid #e8e3e8;border-radius:18px;background:#fff;padding:28px;box-shadow:0 8px 28px #2417280a}
   .settings-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:24px}
   .settings-card h2{margin:0 0 7px;font-size:19px;color:#211b25}
