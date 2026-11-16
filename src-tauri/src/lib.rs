@@ -72,8 +72,11 @@ fn database(app: &tauri::AppHandle) -> Result<Connection, String> {
     );
     CREATE TABLE IF NOT EXISTS note_images (
         name TEXT PRIMARY KEY COLLATE NOCASE,
-        image_data_url TEXT NOT NULL
+        image_data_url TEXT NOT NULL,
+        parfumo_url TEXT NOT NULL DEFAULT ''
     );").map_err(|e| e.to_string())?;
+    let has_parfumo_url: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('note_images') WHERE name = 'parfumo_url')", [], |row| row.get(0)).map_err(|e| e.to_string())?;
+    if !has_parfumo_url { conn.execute("ALTER TABLE note_images ADD COLUMN parfumo_url TEXT NOT NULL DEFAULT ''", []).map_err(|e| e.to_string())?; }
     let columns = [
         ("shelf", "TEXT NOT NULL DEFAULT 'Collection'"),
         ("bottles_owned", "INTEGER NOT NULL DEFAULT 0"),
@@ -219,13 +222,17 @@ fn load_fragrances(conn: &Connection) -> Result<Vec<Fragrance>, String> {
 struct NoteImage {
     name: String,
     image_url: String,
+    parfumo_url: String,
     usage_count: usize,
 }
 
 #[tauri::command]
 fn list_note_images(app: tauri::AppHandle) -> Result<Vec<NoteImage>, String> {
     let conn = database(&app)?;
-    load_note_images(&conn)
+    let upgraded = parfumo::upgrade_note_images(&conn)?;
+    let notes = load_note_images(&conn)?;
+    if upgraded > 0 { backup::after_change(&app)?; }
+    Ok(notes)
 }
 
 fn load_note_images(conn: &Connection) -> Result<Vec<NoteImage>, String> {
@@ -257,7 +264,7 @@ fn load_note_images(conn: &Connection) -> Result<Vec<NoteImage>, String> {
                 .map_err(|e| e.to_string())?;
         }
     }
-    let mut statement = conn.prepare("SELECT name, image_data_url FROM note_images")
+    let mut statement = conn.prepare("SELECT name, image_data_url, parfumo_url FROM note_images")
         .map_err(|e| e.to_string())?;
     let rows = statement.query_map([], |row| {
         let name: String = row.get(0)?;
@@ -265,6 +272,7 @@ fn load_note_images(conn: &Connection) -> Result<Vec<NoteImage>, String> {
             usage_count: *usage_counts.get(&name.to_lowercase()).unwrap_or(&0),
             name,
             image_url: row.get(1)?,
+            parfumo_url: row.get(2)?,
         })
     }).map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
@@ -392,7 +400,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note, can_install_update, backup::get_backup_folder, backup::set_backup_folder, csv_io::export_fragrances_csv, csv_io::import_fragrances_csv, csv_io::export_notes_csv, csv_io::import_notes_csv, parfumo::parfumo_status, parfumo::open_parfumo_login, parfumo::save_parfumo_session, parfumo::disconnect_parfumo])
+        .invoke_handler(tauri::generate_handler![save_fragrance, update_fragrance, delete_fragrance, list_fragrances, list_note_images, set_note_image, remove_note_image, create_note, rename_note, delete_note, can_install_update, backup::get_backup_folder, backup::set_backup_folder, csv_io::export_fragrances_csv, csv_io::import_fragrances_csv, csv_io::export_notes_csv, csv_io::import_notes_csv, parfumo::parfumo_status, parfumo::open_parfumo_login, parfumo::save_parfumo_session, parfumo::disconnect_parfumo, parfumo::search_parfumo_notes, parfumo::save_parfumo_note])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -432,10 +440,10 @@ mod tests {
     fn note_usage_counts_each_fragrance_once() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE fragrances (top_notes TEXT, heart_notes TEXT, base_notes TEXT);
-            CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL);
+            CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL, parfumo_url TEXT NOT NULL DEFAULT '');
             INSERT INTO fragrances VALUES ('[\"Rose\",\"rose\"]', '[\"ROSE\"]', '[]');
             INSERT INTO fragrances VALUES ('[\"Rose\"]', '[]', '[]');
-            INSERT INTO note_images VALUES ('Jasmine', '');").unwrap();
+            INSERT INTO note_images (name, image_data_url) VALUES ('Jasmine', '');").unwrap();
 
         let notes = load_note_images(&conn).unwrap();
         assert_eq!(notes.iter().find(|note| note.name == "Rose").unwrap().usage_count, 2);

@@ -23,7 +23,7 @@ const FRAGRANCE_HEADERS: [&str; 20] = [
     "current_price",
     "concentration",
 ];
-const NOTE_HEADERS: [&str; 2] = ["name", "image_url"];
+const NOTE_HEADERS: [&str; 3] = ["name", "image_url", "parfumo_url"];
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +67,8 @@ struct FragranceRow {
 struct NoteRow {
     name: String,
     image_url: String,
+    #[serde(default)]
+    parfumo_url: String,
 }
 
 fn notes_from_cell(value: &str) -> Result<Vec<String>, String> {
@@ -226,6 +228,7 @@ pub(super) fn note_csv(conn: &Connection) -> Result<String, String> {
             .serialize(NoteRow {
                 name: note.name,
                 image_url: note.image_url,
+                parfumo_url: note.parfumo_url,
             })
             .map_err(|e| e.to_string())?;
     }
@@ -238,7 +241,9 @@ fn import_notes(conn: &mut Connection, content: &str) -> Result<ImportReport, St
         .headers()
         .map_err(|e| format!("Invalid CSV header: {e}"))?
         .clone();
-    validate_headers(&headers, &NOTE_HEADERS)?;
+    if !(headers.len() == 2 && headers.iter().collect::<HashSet<_>>() == ["name", "image_url"].into_iter().collect()) {
+        validate_headers(&headers, &NOTE_HEADERS)?;
+    }
     let mut incoming = Vec::new();
     for (index, row) in reader.deserialize::<NoteRow>().enumerate() {
         let row = row.map_err(|e| format!("CSV row {} is invalid: {e}", index + 2))?;
@@ -248,6 +253,9 @@ fn import_notes(conn: &mut Connection, content: &str) -> Result<ImportReport, St
         if !row.image_url.trim().is_empty() {
             validate_image_url(&row.image_url)
                 .map_err(|e| format!("CSV row {}: {e}", index + 2))?;
+        }
+        if !row.parfumo_url.trim().is_empty() && parfumo::parfumo_link(&row.parfumo_url).is_empty() {
+            return Err(format!("CSV row {}: Enter a valid Parfumo link", index + 2));
         }
         incoming.push((index + 2, row));
     }
@@ -279,8 +287,8 @@ fn import_notes(conn: &mut Connection, content: &str) -> Result<ImportReport, St
         }
         transaction
             .execute(
-                "INSERT INTO note_images (name, image_data_url) VALUES (?1, ?2)",
-                params![note.name.trim(), note.image_url.trim()],
+                "INSERT INTO note_images (name, image_data_url, parfumo_url) VALUES (?1, ?2, ?3)",
+                params![note.name.trim(), note.image_url.trim(), note.parfumo_url.trim()],
             )
             .map_err(|e| e.to_string())?;
         report.imported += 1;
@@ -340,7 +348,7 @@ mod tests {
             shelf TEXT NOT NULL DEFAULT 'Collection', bottles_owned INTEGER NOT NULL DEFAULT 0,
             bottles_finished INTEGER NOT NULL DEFAULT 0, favourite INTEGER NOT NULL DEFAULT 0,
             price_bought REAL, current_price REAL, concentration TEXT NOT NULL DEFAULT ''
-        ); CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL);").unwrap();
+        ); CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL, parfumo_url TEXT NOT NULL DEFAULT '');").unwrap();
         conn
     }
 

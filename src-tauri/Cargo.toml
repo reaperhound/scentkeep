@@ -29,6 +29,12 @@ csv = "1"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 keyring = { version = "3.6.3", features = ["apple-native", "sync-secret-service", "windows-native"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+scraper = "0.23"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
+javascriptcore-rs = "1.1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -6,7 +6,7 @@
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { check, type Update } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
-  import { backend, type CsvImportReport, type Fragrance, type NoteImage, type ParfumoStatus } from '$lib/backend';
+  import { backend, type CsvImportReport, type Fragrance, type NoteImage, type ParfumoNote, type ParfumoStatus } from '$lib/backend';
   import NavIcon from '$lib/NavIcon.svelte';
 
   const blank = (): Fragrance => ({ collection: '', name: '', brand: '', year: new Date().getFullYear(), audience: 'Unisex', concentration: '', description: '', topNotes: [], heartNotes: [], baseNotes: [], perfumer: '', bottleRating: null, ratingCount: null, imageUrl: '', shelf: 'Collection', bottlesOwned: 0, bottlesFinished: 0, favourite: false, priceBought: null, currentPrice: null });
@@ -29,6 +29,12 @@
   let noteImages = $state<NoteImage[]>([]);
   let noteSearch = $state('');
   let newNoteName = $state('');
+  let parfumoNotes = $state<ParfumoNote[]>([]);
+  let searchingParfumoNotes = $state(false);
+  let parfumoNoteError = $state('');
+  let savingParfumoNote = $state(false);
+  let parfumoResultsOpen = $state(false);
+  let noteSearchVersion = 0;
   let editingNote = $state('');
   let editedNoteName = $state('');
   let savingNoteImage = $state('');
@@ -73,6 +79,27 @@
   const visibleNotes = $derived(allNotes.filter((note) => note.toLocaleLowerCase().includes(noteSearch.toLocaleLowerCase())));
   const selectedFragrance = $derived(entries.find((item) => item.id === selectedId));
   const visibleEntries = $derived(entries.filter((item) => (activeShelf === 'Collection' ? (collectionFilter === 'All' || (collectionFilter === 'Owned' ? item.shelf === 'Collection' : item.shelf === collectionFilter)) : item.shelf === activeShelf) && `${item.name} ${item.brand} ${item.collection}`.toLowerCase().includes(search.toLowerCase())));
+
+  $effect(() => {
+    const query = newNoteName.trim();
+    const version = ++noteSearchVersion;
+    parfumoNotes = [];
+    parfumoNoteError = '';
+    searchingParfumoNotes = false;
+    if (view !== 'notes' || !parfumoStatus?.connected || query.length < 2) return;
+    const timer = setTimeout(async () => {
+      searchingParfumoNotes = true;
+      try {
+        const results = await backend.searchParfumoNotes(query);
+        if (version === noteSearchVersion) parfumoNotes = results;
+      } catch (e) {
+        if (version === noteSearchVersion) parfumoNoteError = String(e);
+      } finally {
+        if (version === noteSearchVersion) searchingParfumoNotes = false;
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  });
 
   onMount(async () => {
     try {
@@ -186,6 +213,16 @@
       success = `${newNoteName.trim()} added to your notes.`;
       newNoteName = '';
     } catch (e) { error = String(e); }
+  }
+  async function selectParfumoNote(note: ParfumoNote) {
+    error = ''; success = ''; savingParfumoNote = true; parfumoResultsOpen = false;
+    try {
+      await backend.saveParfumoNote(note);
+      noteImages = await backend.listNoteImages();
+      newNoteName = '';
+      success = `${note.name} saved from Parfumo.`;
+    } catch (e) { error = String(e); }
+    finally { savingParfumoNote = false; }
   }
   async function renameNote(oldName: string) {
     error = ''; success = '';
@@ -473,12 +510,32 @@
         </div>
         {#if success}<div class="message success">{success}</div>{/if}{#if error}<div class="message error" role="alert">{error}</div>{/if}
         {#if csvReport?.kind === 'notes'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'note' : 'notes'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'note' : 'notes'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}
-        <form class="new-note-form" onsubmit={(event) => { event.preventDefault(); createNote(); }}><input aria-label="New note name" placeholder="Add a new perfume note..." bind:value={newNoteName} /><button type="submit" disabled={!newNoteName.trim()}>+ Add note</button></form>
+        <div class="parfumo-note-search">
+          <form class="new-note-form" onsubmit={(event) => { event.preventDefault(); createNote(); parfumoResultsOpen = false; }}>
+            <input aria-label="Search Parfumo or enter a note name" role="combobox" aria-autocomplete="list" aria-expanded={parfumoResultsOpen && parfumoNotes.length > 0} aria-controls="parfumo-note-results" autocomplete="off" placeholder="Search Parfumo notes or add your own..." bind:value={newNoteName} onfocus={() => parfumoResultsOpen = true} onkeydown={(event) => { if (event.key === 'Escape') parfumoResultsOpen = false; }} />
+            <button type="submit" disabled={!newNoteName.trim() || savingParfumoNote}>+ Add note</button>
+          </form>
+          {#if parfumoStatus?.connected && newNoteName.trim().length >= 2 && parfumoResultsOpen}
+            <div class="parfumo-note-results" id="parfumo-note-results" role="listbox" aria-label="Parfumo note results">
+              <div class="suggestions-heading">PARFUMO NOTES</div>
+              {#if searchingParfumoNotes}<p>Searching Parfumo…</p>
+              {:else if parfumoNoteError}<p class="parfumo-result-error">{parfumoNoteError}</p>
+              {:else if parfumoNotes.length === 0}<p>No matching Parfumo notes.</p>
+              {:else}{#each parfumoNotes as note}
+                <button type="button" role="option" aria-selected="false" disabled={savingParfumoNote} onclick={() => selectParfumoNote(note)}>
+                  {#if note.imageUrl}<img src={note.imageUrl} alt="" />{:else}<span class="parfumo-result-placeholder">✧</span>{/if}
+                  <span>{note.name}<small>Save Parfumo note</small></span>
+                </button>
+              {/each}{/if}
+            </div>
+          {/if}
+        </div>
+        {#if !parfumoStatus?.connected}<p class="note-source-tip">Connect Parfumo in Settings to search its notes. You can still add a note by name.</p>{/if}
         <div class="library-toolbar"><div class="search-box">⌕ <input aria-label="Search notes" placeholder="Search perfume notes..." bind:value={noteSearch} /></div><span>{visibleNotes.length} {visibleNotes.length === 1 ? 'note' : 'notes'}</span></div>
         {#if visibleNotes.length === 0}
           <div class="empty-state"><div>◈</div><h2>{allNotes.length === 0 ? 'No notes in your collection yet' : 'No notes found'}</h2><p>{allNotes.length === 0 ? 'Add a note above, or add notes to a fragrance.' : 'Try another search term.'}</p>{#if allNotes.length === 0}<button class="primary-button" onclick={startNew}>Add a fragrance →</button>{/if}</div>
         {:else}
-          <div class="notes-grid">{#each visibleNotes as note}<article class="note-card"><div class="note-art">{#if imageFor(note)}<img src={imageFor(note)} alt={note} />{:else}<span>✧</span>{/if}</div><div class="note-card-body">{#if editingNote === note}<form class="rename-note-form" onsubmit={(event) => { event.preventDefault(); renameNote(note); }}><input aria-label={`Rename ${note}`} bind:value={editedNoteName} /><button type="submit" disabled={!editedNoteName.trim()}>Save</button><button type="button" onclick={() => editingNote = ''}>Cancel</button></form>{:else}<h2>{note}</h2>{/if}<p>Used in {noteImages.find((image) => image.name === note)?.usageCount ?? 0} fragrances</p><form class="note-image-form" onsubmit={(event) => { event.preventDefault(); setNoteImage(note); }}><input type="url" aria-label={`Image link for ${note}`} placeholder="https://example.com/note.jpg" value={noteImageDrafts[note] ?? ''} oninput={(event) => noteImageDrafts[note] = event.currentTarget.value} /><div><button type="submit" disabled={savingNoteImage === note || !noteImageDrafts[note]?.trim()}>{savingNoteImage === note ? 'Saving…' : imageFor(note) ? 'Update image link' : '+ Add image link'}</button>{#if imageFor(note)}<button type="button" onclick={() => removeNoteImage(note)}>Remove image</button>{/if}</div></form><div class="note-manage-actions"><button onclick={() => { editingNote = note; editedNoteName = note; }}>Rename</button><button class="danger" onclick={() => deleteNote(note)}>Delete note</button></div></div></article>{/each}</div>
+          <div class="notes-grid">{#each visibleNotes as note}<article class="note-card"><div class="note-art">{#if imageFor(note)}<img src={imageFor(note)} alt={note} />{:else}<span>✧</span>{/if}</div><div class="note-card-body">{#if editingNote === note}<form class="rename-note-form" onsubmit={(event) => { event.preventDefault(); renameNote(note); }}><input aria-label={`Rename ${note}`} bind:value={editedNoteName} /><button type="submit" disabled={!editedNoteName.trim()}>Save</button><button type="button" onclick={() => editingNote = ''}>Cancel</button></form>{:else}<h2>{note}</h2>{/if}<p>Used in {noteImages.find((image) => image.name === note)?.usageCount ?? 0} fragrances</p>{#if noteImages.find((image) => image.name === note)?.parfumoUrl}<a class="note-source-link" href={noteImages.find((image) => image.name === note)?.parfumoUrl} target="_blank" rel="noreferrer">View on Parfumo ↗</a>{/if}<form class="note-image-form" onsubmit={(event) => { event.preventDefault(); setNoteImage(note); }}><input type="url" aria-label={`Image link for ${note}`} placeholder="https://example.com/note.jpg" value={noteImageDrafts[note] ?? ''} oninput={(event) => noteImageDrafts[note] = event.currentTarget.value} /><div><button type="submit" disabled={savingNoteImage === note || !noteImageDrafts[note]?.trim()}>{savingNoteImage === note ? 'Saving…' : imageFor(note) ? 'Update image link' : '+ Add image link'}</button>{#if imageFor(note)}<button type="button" onclick={() => removeNoteImage(note)}>Remove image</button>{/if}</div></form><div class="note-manage-actions"><button onclick={() => { editingNote = note; editedNoteName = note; }}>Rename</button><button class="danger" onclick={() => deleteNote(note)}>Delete note</button></div></div></article>{/each}</div>
         {/if}
       </div>
     {:else if view === 'settings'}
@@ -794,4 +851,14 @@
     .breadcrumb{font-size:12px}
     .connector{min-width:16px;margin:0 6px}
   }
+  .parfumo-note-search{position:relative;margin-bottom:23px}
+  .parfumo-note-search .new-note-form{margin-bottom:0}
+  .parfumo-note-results{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:25;background:#fff;border:1px solid #dce8f5;border-radius:10px;box-shadow:0 12px 28px #234e8424;padding:7px;max-height:300px;overflow-y:auto}
+  .parfumo-note-results>p{margin:8px 10px;color:#7f96ae;font-size:12px}
+  .parfumo-note-results>.parfumo-result-error{color:#b84858}
+  .parfumo-note-results>button{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:7px;background:transparent;text-align:left;color:#344c69}
+  .parfumo-note-results>button:hover,.parfumo-note-results>button:focus-visible{background:#edf5ff}
+  .parfumo-note-results img,.parfumo-result-placeholder{width:38px;height:38px;object-fit:cover;border-radius:6px;background:#edf5ff;display:grid;place-items:center;flex:none}
+  .parfumo-note-results small{display:block;color:#8ca1bd;font-size:10px;margin-top:2px}
+  .note-source-link{display:block;color:#3789e9;font-size:11px;font-weight:700;margin:-7px 0 12px;text-decoration:none}
 </style>

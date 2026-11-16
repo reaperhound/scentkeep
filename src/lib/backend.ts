@@ -8,7 +8,8 @@ export type Fragrance = {
   shelf: 'Collection' | 'Wishlist' | 'Empties'; bottlesOwned: number; bottlesFinished: number; favourite: boolean; priceBought: number | null; currentPrice: number | null;
 };
 
-export type NoteImage = { name: string; imageUrl: string; usageCount: number };
+export type NoteImage = { name: string; imageUrl: string; parfumoUrl: string; usageCount: number };
+export type ParfumoNote = { name: string; imageUrl: string; parfumoUrl: string };
 export type CsvImportReport = { imported: number; duplicates: string[] };
 export type ParfumoStatus = { connected: boolean; cookieCount: number };
 
@@ -19,6 +20,8 @@ export const backend = {
   deleteFragrance: (id: number) => invoke<void>('delete_fragrance', { id }),
   listNoteImages: () => invoke<NoteImage[]>('list_note_images'),
   createNote: (name: string) => invoke<void>('create_note', { name }),
+  searchParfumoNotes: (query: string) => invoke<ParfumoNote[]>('search_parfumo_notes', { query }),
+  saveParfumoNote: (note: ParfumoNote) => invoke<void>('save_parfumo_note', { note }),
   renameNote: (oldName: string, newName: string) => invoke<void>('rename_note', { oldName, newName }),
   deleteNote: (name: string) => invoke<void>('delete_note', { name }),
   setNoteImage: (name: string, imageUrl: string) => invoke<void>('set_note_image', { name, imageUrl }),
