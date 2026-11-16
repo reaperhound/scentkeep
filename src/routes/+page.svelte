@@ -18,6 +18,8 @@
   let activeShelf = $state<'Collection' | 'Wishlist' | 'Empties'>('Collection');
   let categoryMenuOpen = $state(false);
   let concentrationMenuOpen = $state(false);
+  let brandSuggestionsOpen = $state(false);
+  let highlightedBrandIndex = $state(-1);
   let sidebarCollapsed = $state(false);
   let profileName = $state('Scentkeeper');
   let profilePicture = $state('');
@@ -84,6 +86,23 @@
   ];
   const sexIconFor = (audience: string) => categories.find((category) => category.value === audience)?.icon ?? '/unisex-symbol-color-icon.svg';
   const allNotes = $derived(noteImages.map((note) => note.name).sort((a, b) => a.localeCompare(b)));
+  const brandSuggestions = $derived.by(() => {
+    const query = fragrance.brand.trim().toLocaleLowerCase();
+    if (!query) return [];
+    const brands = new Map<string, string>();
+    for (const item of entries) {
+      const brand = item.brand.trim();
+      const key = brand.toLocaleLowerCase();
+      if (brand && !brands.has(key)) brands.set(key, brand);
+    }
+    return [...brands.values()]
+      .filter((brand) => {
+        const name = brand.toLocaleLowerCase();
+        return name.includes(query) && name !== query;
+      })
+      .sort((a, b) => Number(!a.toLocaleLowerCase().startsWith(query)) - Number(!b.toLocaleLowerCase().startsWith(query)) || a.localeCompare(b))
+      .slice(0, 6);
+  });
   const visibleNotes = $derived(allNotes.filter((note) => note.toLocaleLowerCase().includes(noteSearch.toLocaleLowerCase())));
   const selectedFragrance = $derived(entries.find((item) => item.id === selectedId));
   const visibleEntries = $derived(entries.filter((item) => (activeShelf === 'Collection' ? (collectionFilter === 'All' || (collectionFilter === 'Owned' ? item.shelf === 'Collection' : item.shelf === collectionFilter)) : item.shelf === activeShelf) && `${item.name} ${item.brand} ${item.collection}`.toLowerCase().includes(search.toLowerCase())));
@@ -345,6 +364,26 @@
       !fragrance[kind].some((added) => added.toLocaleLowerCase() === name.toLocaleLowerCase())
     ).slice(0, 6);
   }
+  function selectBrand(brand: string) {
+    fragrance.brand = brand;
+    brandSuggestionsOpen = false;
+    highlightedBrandIndex = -1;
+  }
+  function handleBrandKeydown(event: KeyboardEvent) {
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && brandSuggestions.length) {
+      event.preventDefault();
+      brandSuggestionsOpen = true;
+      highlightedBrandIndex = event.key === 'ArrowDown'
+        ? (highlightedBrandIndex + 1) % brandSuggestions.length
+        : (highlightedBrandIndex - 1 + brandSuggestions.length) % brandSuggestions.length;
+    } else if (event.key === 'Enter' && brandSuggestionsOpen && highlightedBrandIndex >= 0) {
+      event.preventDefault();
+      selectBrand(brandSuggestions[highlightedBrandIndex]);
+    } else if (event.key === 'Escape') {
+      brandSuggestionsOpen = false;
+      highlightedBrandIndex = -1;
+    }
+  }
   function handleNoteKeydown(event: KeyboardEvent, kind: NoteLayer) {
     const suggestions = suggestionsFor(kind);
     if (event.key === 'ArrowDown' && suggestions.length) {
@@ -500,7 +539,43 @@
         <div class="form-card">
           {#if step === 0}
             <div class="card-heading"><div><h2>The essentials</h2><p>Start with the fragrance’s identity.</p></div></div>
-            <div class="form-grid"><label class="field wide"><span class="field-label-row"><span class="field-label-text">Fragrance name <b>*</b></span></span><input placeholder="e.g. Odéon Sunset" bind:value={fragrance.name} /></label><label class="field"><span class="field-label-row"><span class="field-label-text">Brand / house <b>*</b></span></span><input placeholder="e.g. Memo Paris" bind:value={fragrance.brand} /></label><label class="field"><span class="field-label-row"><span class="field-label-text">Collection</span><span class="field-hint">Optional</span></span><input placeholder="e.g. Fleurs Bohèmes" bind:value={fragrance.collection} /></label><label class="field"><span class="field-label-row"><span class="field-label-text">Release year</span></span><input type="number" min="1800" max="2100" bind:value={fragrance.year} /></label><label class="field"><span class="field-label-row"><span class="field-label-text">Perfumer</span><span class="field-hint">Optional</span></span><input placeholder="e.g. Aliénor Massenet" bind:value={fragrance.perfumer} /></label><div class="field concentration-field"><div class="field-label-row"><span class="field-label-text">Concentration</span><span class="field-hint">Optional</span></div><div class="category-picker"><button type="button" class="category-trigger" aria-haspopup="listbox" aria-expanded={concentrationMenuOpen} onclick={() => { concentrationMenuOpen = !concentrationMenuOpen; categoryMenuOpen = false; }}>{fragrance.concentration || 'Select concentration'}<span class:rotated={concentrationMenuOpen} class="category-chevron"></span></button>{#if concentrationMenuOpen}<div class="category-options concentration-options" role="listbox" aria-label="Concentration"><button type="button" role="option" aria-selected={fragrance.concentration === ''} class:selected={fragrance.concentration === ''} onclick={() => { fragrance.concentration = ''; concentrationMenuOpen = false; }}>Select concentration</button>{#each concentrations as concentration}<button type="button" role="option" aria-selected={fragrance.concentration === concentration} class:selected={fragrance.concentration === concentration} onclick={() => { fragrance.concentration = concentration; concentrationMenuOpen = false; }}>{concentration}{#if fragrance.concentration === concentration}<span>✓</span>{/if}</button>{/each}</div>{/if}</div></div></div>
+            <div class="form-grid"><label class="field wide"><span class="field-label-row"><span class="field-label-text">Fragrance name <b>*</b></span></span><input placeholder="e.g. Odéon Sunset" bind:value={fragrance.name} /></label><div class="field brand-field">
+              <label class="field-label-row" for="fragrance-brand"><span class="field-label-text">Brand / house <b>*</b></span></label>
+              <div class="brand-input-wrap">
+                <input
+                  id="fragrance-brand"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={brandSuggestionsOpen && brandSuggestions.length > 0}
+                  aria-controls={brandSuggestionsOpen && brandSuggestions.length > 0 ? 'brand-suggestions' : undefined}
+                  aria-activedescendant={brandSuggestionsOpen && highlightedBrandIndex >= 0 ? `brand-option-${highlightedBrandIndex}` : undefined}
+                  autocomplete="off"
+                  placeholder="e.g. Memo Paris"
+                  bind:value={fragrance.brand}
+                  onfocus={() => { brandSuggestionsOpen = true; highlightedBrandIndex = -1; }}
+                  oninput={() => { brandSuggestionsOpen = true; highlightedBrandIndex = -1; }}
+                  onblur={() => { brandSuggestionsOpen = false; highlightedBrandIndex = -1; }}
+                  onkeydown={handleBrandKeydown}
+                />
+                {#if brandSuggestionsOpen && brandSuggestions.length > 0}
+                  <div class="note-suggestions brand-suggestions" id="brand-suggestions" role="listbox" aria-label="Saved brands">
+                    {#each brandSuggestions as suggestion, index}
+                      <button
+                        type="button"
+                        id={`brand-option-${index}`}
+                        role="option"
+                        aria-selected={highlightedBrandIndex === index}
+                        class:highlighted={highlightedBrandIndex === index}
+                        tabindex="-1"
+                        onpointerdown={(event) => event.preventDefault()}
+                        onmouseenter={() => highlightedBrandIndex = index}
+                        onclick={() => selectBrand(suggestion)}
+                      >{suggestion}</button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            </div><label class="field"><span class="field-label-row"><span class="field-label-text">Collection</span><span class="field-hint">Optional</span></span><input placeholder="e.g. Fleurs Bohèmes" bind:value={fragrance.collection} /></label><label class="field"><span class="field-label-row"><span class="field-label-text">Release year</span></span><input type="number" min="1800" max="2100" bind:value={fragrance.year} /></label><label class="field"><span class="field-label-row"><span class="field-label-text">Perfumer</span><span class="field-hint">Optional</span></span><input placeholder="e.g. Aliénor Massenet" bind:value={fragrance.perfumer} /></label><div class="field concentration-field"><div class="field-label-row"><span class="field-label-text">Concentration</span><span class="field-hint">Optional</span></div><div class="category-picker"><button type="button" class="category-trigger" aria-haspopup="listbox" aria-expanded={concentrationMenuOpen} onclick={() => { concentrationMenuOpen = !concentrationMenuOpen; categoryMenuOpen = false; }}>{fragrance.concentration || 'Select concentration'}<span class:rotated={concentrationMenuOpen} class="category-chevron"></span></button>{#if concentrationMenuOpen}<div class="category-options concentration-options" role="listbox" aria-label="Concentration"><button type="button" role="option" aria-selected={fragrance.concentration === ''} class:selected={fragrance.concentration === ''} onclick={() => { fragrance.concentration = ''; concentrationMenuOpen = false; }}>Select concentration</button>{#each concentrations as concentration}<button type="button" role="option" aria-selected={fragrance.concentration === concentration} class:selected={fragrance.concentration === concentration} onclick={() => { fragrance.concentration = concentration; concentrationMenuOpen = false; }}>{concentration}{#if fragrance.concentration === concentration}<span>✓</span>{/if}</button>{/each}</div>{/if}</div></div></div>
             <div class="section-divider"></div><div class="field category-field"><div class="field-label-row"><span class="field-label-text">Status</span></div><div class="category-picker"><button type="button" class="category-trigger" aria-haspopup="listbox" aria-expanded={categoryMenuOpen} onclick={() => categoryMenuOpen = !categoryMenuOpen}>{fragrance.shelf}<span class:rotated={categoryMenuOpen} class="category-chevron"></span></button>{#if categoryMenuOpen}<div class="category-options" role="listbox" aria-label="Status">{#each ['Collection', 'Wishlist', 'Empties'] as shelf}<button type="button" role="option" aria-selected={fragrance.shelf === shelf} class:selected={fragrance.shelf === shelf} onclick={() => { fragrance.shelf = shelf as typeof fragrance.shelf; categoryMenuOpen = false; }}>{shelf}{#if fragrance.shelf === shelf}<span>✓</span>{/if}</button>{/each}</div>{/if}</div></div><div class="field-title">Who is this fragrance for?</div><div class="choice-grid">{#each categories as category}<button type="button" class:selected={fragrance.audience === category.value} onclick={() => fragrance.audience = category.value}><span class="choice-icon"><img src={category.icon} alt="" /></span><strong>{category.label}</strong><span class="radio-dot"></span></button>{/each}</div>
           {:else if step === 1}
             <div class="card-heading"><div><h2>Fragrance pyramid</h2><p>Build the scent, layer by layer. Add each note separately.</p></div></div>
