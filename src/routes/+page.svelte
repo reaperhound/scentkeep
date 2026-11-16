@@ -490,6 +490,7 @@
     } catch (e) { error = String(e); }
   }
   async function save() {
+    if (saving) return;
     error = ''; success = '';
     if (!fragrance.name.trim() || !fragrance.brand.trim()) {
       error = 'A fragrance name and brand are required.'; step = 0; return;
@@ -633,7 +634,8 @@
             <div class="summary"><div><strong>Ready for your collection</strong><p>{fragrance.name || 'Your fragrance'} by {fragrance.brand || 'your chosen house'}, {fragrance.year}, {fragrance.audience}</p></div></div>
           {/if}
         </div>
-        <div class="form-footer"><span>Fields marked <b>*</b> are required</span><div>{#if step > 0}<button class="back-button" onclick={() => { step -= 1; error = ''; }}>← Back</button>{/if}{#if step < 2}<button class="primary-button" onclick={next}>Continue</button>{:else}<button class="primary-button" disabled={saving} onclick={save}>{saving ? 'Saving…' : (fragrance.id === undefined ? 'Save fragrance' : 'Save changes')}</button>{/if}</div></div>
+        <div class="form-footer"><span>Fields marked <b>*</b> are required</span><div>{#if step > 0}<button class="back-button" disabled={saving} onclick={() => { step -= 1; error = ''; }}>← Back</button>{/if}{#if step < 2}<button class="primary-button" onclick={next}>Continue</button>{:else}<button class="primary-button" disabled={saving} onclick={save}>{#if saving}<span class="save-spinner" aria-hidden="true"></span>Saving…{:else}{fragrance.id === undefined ? 'Save fragrance' : 'Save changes'}{/if}</button>{/if}</div></div>
+        {#if saving}<p class="save-status" role="status">Saving your fragrance and finishing backups. This may take a moment.</p>{/if}
       </div>
     {:else if view === 'detail' && selectedFragrance}
       <div class="page-content detail-page">

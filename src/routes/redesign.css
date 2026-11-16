@@ -161,6 +161,9 @@ input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 
 .selected .radio-dot { border: 4px solid var(--color-ink); }
 .form-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); margin-top: 20px; color: var(--color-muted); font-size: 12px; }
 .form-footer > div { display: flex; gap: var(--space-xs); }
+.save-spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: save-spin .8s linear infinite; }
+.save-status { margin-top: var(--space-xs); color: var(--color-muted); font-size: 12px; }
+@keyframes save-spin { to { transform: rotate(360deg); } }
 .note-section { padding: 20px 0 var(--space-lg); border-top: 1px solid var(--color-rule); }
 .note-title { margin-bottom: var(--space-sm); }
 .note-title h3 { font: 400 23px/1.1 var(--font-display); }
