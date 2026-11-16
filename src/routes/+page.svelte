@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { isTauri } from '@tauri-apps/api/core';
   import { invoke } from '@tauri-apps/api/core';
@@ -34,6 +34,7 @@
   let parfumoNoteError = $state('');
   let savingParfumoNote = $state(false);
   let parfumoResultsOpen = $state(false);
+  let highlightedParfumoIndex = $state(-1);
   let noteSearchVersion = 0;
   let editingNote = $state('');
   let editedNoteName = $state('');
@@ -84,6 +85,7 @@
     const query = newNoteName.trim();
     const version = ++noteSearchVersion;
     parfumoNotes = [];
+    highlightedParfumoIndex = -1;
     parfumoNoteError = '';
     searchingParfumoNotes = false;
     if (view !== 'notes' || !parfumoStatus?.connected || query.length < 2) return;
@@ -91,7 +93,10 @@
       searchingParfumoNotes = true;
       try {
         const results = await backend.searchParfumoNotes(query);
-        if (version === noteSearchVersion) parfumoNotes = results;
+        if (version === noteSearchVersion) {
+          parfumoNotes = results;
+          highlightedParfumoIndex = -1;
+        }
       } catch (e) {
         if (version === noteSearchVersion) parfumoNoteError = String(e);
       } finally {
@@ -214,8 +219,28 @@
       newNoteName = '';
     } catch (e) { error = String(e); }
   }
+  function handleParfumoNoteKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      parfumoResultsOpen = false;
+      highlightedParfumoIndex = -1;
+    } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && parfumoStatus?.connected && parfumoNotes.length && !searchingParfumoNotes && !savingParfumoNote) {
+      event.preventDefault();
+      parfumoResultsOpen = true;
+      highlightedParfumoIndex = event.key === 'ArrowDown'
+        ? (highlightedParfumoIndex + 1) % parfumoNotes.length
+        : highlightedParfumoIndex < 0 ? parfumoNotes.length - 1 : (highlightedParfumoIndex - 1 + parfumoNotes.length) % parfumoNotes.length;
+      const index = highlightedParfumoIndex;
+      void tick().then(() => {
+        if (parfumoResultsOpen && highlightedParfumoIndex === index)
+          document.getElementById(`parfumo-note-option-${index}`)?.scrollIntoView({ block: 'nearest' });
+      });
+    } else if (event.key === 'Enter' && parfumoResultsOpen && highlightedParfumoIndex >= 0 && parfumoNotes[highlightedParfumoIndex] && !searchingParfumoNotes && !savingParfumoNote) {
+      event.preventDefault();
+      void selectParfumoNote(parfumoNotes[highlightedParfumoIndex]);
+    }
+  }
   async function selectParfumoNote(note: ParfumoNote) {
-    error = ''; success = ''; savingParfumoNote = true; parfumoResultsOpen = false;
+    error = ''; success = ''; savingParfumoNote = true; parfumoResultsOpen = false; highlightedParfumoIndex = -1;
     try {
       await backend.saveParfumoNote(note);
       noteImages = await backend.listNoteImages();
@@ -512,7 +537,7 @@
         {#if csvReport?.kind === 'notes'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'note' : 'notes'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'note' : 'notes'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}
         <div class="parfumo-note-search">
           <form class="new-note-form" onsubmit={(event) => { event.preventDefault(); createNote(); parfumoResultsOpen = false; }}>
-            <input aria-label="Search Parfumo or enter a note name" role="combobox" aria-autocomplete="list" aria-expanded={parfumoResultsOpen && parfumoNotes.length > 0} aria-controls="parfumo-note-results" autocomplete="off" placeholder="Search Parfumo notes or add your own..." bind:value={newNoteName} onfocus={() => parfumoResultsOpen = true} onkeydown={(event) => { if (event.key === 'Escape') parfumoResultsOpen = false; }} />
+            <input aria-label="Search Parfumo or enter a note name" role="combobox" aria-autocomplete="list" aria-expanded={parfumoResultsOpen && parfumoStatus?.connected && newNoteName.trim().length >= 2} aria-controls={parfumoResultsOpen && parfumoStatus?.connected && newNoteName.trim().length >= 2 ? 'parfumo-note-results' : undefined} aria-activedescendant={parfumoResultsOpen && highlightedParfumoIndex >= 0 && !searchingParfumoNotes ? `parfumo-note-option-${highlightedParfumoIndex}` : undefined} autocomplete="off" placeholder="Search Parfumo notes or add your own..." bind:value={newNoteName} onfocus={() => { parfumoResultsOpen = true; highlightedParfumoIndex = -1; }} oninput={() => { parfumoResultsOpen = true; highlightedParfumoIndex = -1; }} onkeydown={handleParfumoNoteKeydown} />
             <button type="submit" disabled={!newNoteName.trim() || savingParfumoNote}>+ Add note</button>
           </form>
           {#if parfumoStatus?.connected && newNoteName.trim().length >= 2 && parfumoResultsOpen}
@@ -521,8 +546,8 @@
               {#if searchingParfumoNotes}<p>Searching Parfumo…</p>
               {:else if parfumoNoteError}<p class="parfumo-result-error">{parfumoNoteError}</p>
               {:else if parfumoNotes.length === 0}<p>No matching Parfumo notes.</p>
-              {:else}{#each parfumoNotes as note}
-                <button type="button" role="option" aria-selected="false" disabled={savingParfumoNote} onclick={() => selectParfumoNote(note)}>
+              {:else}{#each parfumoNotes as note, index}
+                <button type="button" id={`parfumo-note-option-${index}`} role="option" aria-selected={highlightedParfumoIndex === index} class:highlighted={highlightedParfumoIndex === index} tabindex="-1" disabled={savingParfumoNote} onclick={() => selectParfumoNote(note)}>
                   {#if note.imageUrl}<img src={note.imageUrl} alt="" />{:else}<span class="parfumo-result-placeholder">✧</span>{/if}
                   <span>{note.name}<small>Save Parfumo note</small></span>
                 </button>
@@ -857,7 +882,7 @@
   .parfumo-note-results>p{margin:8px 10px;color:#7f96ae;font-size:12px}
   .parfumo-note-results>.parfumo-result-error{color:#b84858}
   .parfumo-note-results>button{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:7px;background:transparent;text-align:left;color:#344c69}
-  .parfumo-note-results>button:hover,.parfumo-note-results>button:focus-visible{background:#edf5ff}
+  .parfumo-note-results>button:hover,.parfumo-note-results>button:focus-visible,.parfumo-note-results>button.highlighted{background:#edf5ff}
   .parfumo-note-results img,.parfumo-result-placeholder{width:38px;height:38px;object-fit:cover;border-radius:6px;background:#edf5ff;display:grid;place-items:center;flex:none}
   .parfumo-note-results small{display:block;color:#8ca1bd;font-size:10px;margin-top:2px}
   .note-source-link{display:block;color:#3789e9;font-size:11px;font-weight:700;margin:-7px 0 12px;text-decoration:none}
