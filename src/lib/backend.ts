@@ -29,7 +29,8 @@ const taskLabels: Record<string, string> = {
   parfumo_status: 'Checking Parfumo connection…',
   open_parfumo_login: 'Opening Parfumo…',
   save_parfumo_session: 'Saving Parfumo session…',
-  disconnect_parfumo: 'Disconnecting Parfumo…'
+  disconnect_parfumo: 'Disconnecting Parfumo…',
+  reset_parfumo_browser: 'Clearing Parfumo browser data…'
 };
 
 const pendingTasks = new Map<number, string>();
@@ -92,5 +93,6 @@ export const backend = {
   parfumoStatus: () => invoke<ParfumoStatus>('parfumo_status'),
   openParfumoLogin: () => invoke<void>('open_parfumo_login'),
   saveParfumoSession: () => invoke<ParfumoStatus>('save_parfumo_session'),
-  disconnectParfumo: () => invoke<void>('disconnect_parfumo')
+  disconnectParfumo: () => invoke<void>('disconnect_parfumo'),
+  resetParfumoBrowser: () => invoke<void>('reset_parfumo_browser')
 };

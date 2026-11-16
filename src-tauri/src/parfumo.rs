@@ -6,7 +6,7 @@ use std::time::Duration;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "linux")]
-use webkit2gtk::WebViewExt;
+use webkit2gtk::{CookieAcceptPolicy, CookieManagerExt, SettingsExt, WebViewExt, WebsiteDataManagerExt, WebsiteDataManagerExtManual, WebsiteDataTypes};
 #[cfg(target_os = "linux")]
 use javascriptcore::ValueExt;
 
@@ -139,7 +139,28 @@ pub(crate) async fn search_parfumo_notes(app: tauri::AppHandle, query: String) -
 }
 
 #[cfg(target_os = "linux")]
-fn evaluate_note_script(window: &tauri::WebviewWindow, script: &str) -> Result<String, String> {
+fn configure_parfumo_webview(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    window.with_webview(move |webview| {
+        let result = (|| {
+            let settings = webview.inner().settings().ok_or("Parfumo browser settings are unavailable")?;
+            settings.set_enable_javascript(true);
+            settings.set_enable_html5_local_storage(true);
+            settings.set_enable_html5_database(true);
+            let manager = webview.inner().website_data_manager().ok_or("Parfumo browser storage is unavailable")?;
+            let cookies = manager.cookie_manager().ok_or("Parfumo browser cookies are unavailable")?;
+            cookies.set_accept_policy(CookieAcceptPolicy::Always);
+            Ok::<(), &str>(())
+        })();
+        let _ = sender.send(result);
+    }).map_err(|error| format!("Could not configure Parfumo browser: {error}"))?;
+    receiver.recv_timeout(Duration::from_secs(2))
+        .map_err(|_| "Parfumo browser did not apply its settings.".to_string())?
+        .map_err(str::to_owned)
+}
+
+#[cfg(target_os = "linux")]
+fn evaluate_browser_script(window: &tauri::WebviewWindow, script: &str) -> Result<String, String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     let script = script.to_owned();
     window.with_webview(move |webview| {
@@ -147,9 +168,9 @@ fn evaluate_note_script(window: &tauri::WebviewWindow, script: &str) -> Result<S
             let response = result.map(|value| value.to_str().to_string()).map_err(|error| error.to_string());
             let _ = sender.send(response);
         });
-    }).map_err(|error| format!("Could not search in Parfumo browser: {error}"))?;
+    }).map_err(|error| format!("Could not read Parfumo browser: {error}"))?;
     receiver.recv_timeout(Duration::from_secs(2))
-        .map_err(|_| "Parfumo browser did not respond to the search.".to_string())?
+        .map_err(|_| "Parfumo browser did not respond.".to_string())?
 }
 
 #[cfg(target_os = "linux")]
@@ -174,6 +195,7 @@ async fn search_notes_in_webview(app: tauri::AppHandle, query: String) -> Result
         ready = Some(receiver);
         window
     };
+    configure_parfumo_webview(&window)?;
     if let Some(receiver) = ready {
         tauri::async_runtime::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(15)))
             .await.map_err(|e| e.to_string())?
@@ -207,11 +229,11 @@ async fn search_notes_in_webview(app: tauri::AppHandle, query: String) -> Result
         return 'started';
     }})()"#);
     let response = tauri::async_runtime::spawn_blocking(move || {
-        evaluate_note_script(&window, &script)?;
+        evaluate_browser_script(&window, &script)?;
         let poll_script = format!("(() => {{ const responses = window.__scentkeepNoteSearchResponses; const result = responses?.get({search_id}); if (result) responses.delete({search_id}); return result ?? ''; }})()");
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         loop {
-            let response = evaluate_note_script(&window, &poll_script)?;
+            let response = evaluate_browser_script(&window, &poll_script)?;
             if !response.is_empty() { break Ok(response); }
             if std::time::Instant::now() >= deadline { break Err("Parfumo search timed out. Try again.".to_string()); }
             std::thread::sleep(Duration::from_millis(100));
@@ -273,6 +295,14 @@ mod note_search_tests {
     use super::*;
 
     #[test]
+    fn challenge_cookies_are_not_a_usable_parfumo_session() {
+        for name in ["cf_clearance", "__cf_bm", "_cfuvid"] {
+            assert!(is_security_cookie(name));
+        }
+        assert!(!is_security_cookie("PHPSESSID"));
+    }
+
+    #[test]
     fn parses_html_suggestions_and_keeps_parfumo_links() {
         let notes = parse_notes(r#"<a href="/Fragrance_Notes/Caramel"><img src="/img/caramel.jpg">Caramel</a><a href="https://evil.example/note">Other</a>"#);
         assert_eq!(notes[0].name, "Caramel");
@@ -328,6 +358,11 @@ pub(crate) struct SavedSession {
     pub cookies: Vec<SavedCookie>,
 }
 
+fn is_security_cookie(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("cf_") || name.starts_with("_cf") || name.starts_with("__cf")
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ParfumoStatus {
@@ -362,6 +397,8 @@ pub(crate) fn parfumo_status() -> Result<ParfumoStatus, String> {
 #[tauri::command]
 pub(crate) fn open_parfumo_login(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(LOGIN_WINDOW) {
+        #[cfg(target_os = "linux")]
+        configure_parfumo_webview(&window)?;
         window.show().map_err(|e| e.to_string())?;
         return window.set_focus().map_err(|e| e.to_string());
     }
@@ -372,12 +409,16 @@ pub(crate) fn open_parfumo_login(app: tauri::AppHandle) -> Result<(), String> {
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("parfumo-webview");
-    WebviewWindowBuilder::new(&app, LOGIN_WINDOW, WebviewUrl::External(url))
+    let window = WebviewWindowBuilder::new(&app, LOGIN_WINDOW, WebviewUrl::External(url))
         .title("Connect Parfumo")
         .inner_size(1100.0, 760.0)
         .data_directory(data_dir)
         .build()
         .map_err(|e| format!("Could not open Parfumo: {e}"))?;
+    #[cfg(target_os = "linux")]
+    configure_parfumo_webview(&window)?;
+    #[cfg(not(target_os = "linux"))]
+    let _ = window;
     Ok(())
 }
 
@@ -387,6 +428,25 @@ pub(crate) async fn save_parfumo_session(app: tauri::AppHandle) -> Result<Parfum
         .get_webview_window(LOGIN_WINDOW)
         .ok_or("Open the Parfumo login window and sign in first.")?;
     tauri::async_runtime::spawn_blocking(move || {
+        let browser_url = window.url().map_err(|error| error.to_string())?;
+        if !matches!(browser_url.host_str(), Some("www.parfumo.com" | "parfumo.com")) {
+            return Err("The Parfumo browser is not on Parfumo. Open Parfumo and sign in before saving the session.".into());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let page_state = evaluate_browser_script(&window, r#"(() => {
+                const title = document.title.toLowerCase();
+                const text = (document.body?.innerText ?? '').slice(0, 3000).toLowerCase();
+                if (title.includes('just a moment') || text.includes('performing security verification') || text.includes('verify you are human') || document.querySelector('iframe[src*="challenges.cloudflare.com"]')) return 'challenge';
+                return document.readyState === 'loading' ? 'loading' : 'ready';
+            })()"#)?;
+            if page_state == "challenge" {
+                return Err("Parfumo is still showing Cloudflare verification. Try Reset browser data in Settings, then reopen Parfumo. If it remains stuck, try a different network or contact Parfumo with the Ray ID shown on the page.".into());
+            }
+            if page_state != "ready" {
+                return Err("Wait for the Parfumo page to finish loading before saving the session.".into());
+            }
+        }
         let url = Url::parse(PARFUMO_URL).map_err(|e| e.to_string())?;
         let cookies = window
             .cookies_for_url(url)
@@ -401,9 +461,9 @@ pub(crate) async fn save_parfumo_session(app: tauri::AppHandle) -> Result<Parfum
             })
             .collect::<Vec<_>>();
 
-        if cookies.is_empty() {
+        if !cookies.iter().any(|cookie| !is_security_cookie(&cookie.name)) {
             return Err(
-                "No Parfumo cookies were found. Sign in in the Parfumo window, then try again."
+                "No usable Parfumo session cookies were found. Finish signing in on Parfumo, then try again."
                     .into(),
             );
         }
@@ -423,30 +483,54 @@ pub(crate) async fn save_parfumo_session(app: tauri::AppHandle) -> Result<Parfum
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub(crate) async fn disconnect_parfumo(app: tauri::AppHandle) -> Result<(), String> {
+fn clear_parfumo_browser(app: &tauri::AppHandle) -> Result<(), String> {
     let window = app.get_webview_window(LOGIN_WINDOW);
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("parfumo-webview");
+    if let Some(window) = window {
+        #[cfg(target_os = "linux")]
+        {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            window.with_webview(move |webview| {
+                if let Some(manager) = webview.inner().website_data_manager() {
+                    manager.clear(WebsiteDataTypes::ALL, webkit2gtk::glib::TimeSpan::from_seconds(0), None::<&webkit2gtk::gio::Cancellable>, move |result| {
+                        let _ = sender.send(result.map_err(|error| error.to_string()));
+                    });
+                } else {
+                    let _ = sender.send(Err("Parfumo browser storage is unavailable".to_string()));
+                }
+            }).map_err(|error| error.to_string())?;
+            receiver.recv_timeout(Duration::from_secs(10))
+                .map_err(|_| "Timed out clearing Parfumo browser data".to_string())??;
+        }
+        #[cfg(not(target_os = "linux"))]
+        window.clear_all_browsing_data().map_err(|error| error.to_string())?;
+        window.close().map_err(|error| error.to_string())?;
+    } else if data_dir.exists() {
+        std::fs::remove_dir_all(&data_dir)
+            .map_err(|error| format!("Could not clear Parfumo browser data: {error}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn reset_parfumo_browser(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || clear_parfumo_browser(&app))
+        .await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn disconnect_parfumo(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let entry = keyring_entry()?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(e) => return Err(format!("Could not remove the saved session: {e}")),
         }
-        if let Some(window) = window {
-            window
-                .clear_all_browsing_data()
-                .map_err(|e| e.to_string())?;
-            window.close().map_err(|e| e.to_string())?;
-        } else if data_dir.exists() {
-            std::fs::remove_dir_all(&data_dir)
-                .map_err(|e| format!("Could not clear Parfumo browser data: {e}"))?;
-        }
-        Ok(())
+        clear_parfumo_browser(&app)
     })
     .await
     .map_err(|e| e.to_string())?

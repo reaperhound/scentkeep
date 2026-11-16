@@ -8,7 +8,9 @@ On first launch, choose a backup folder. Scentkeep immediately writes `scentkeep
 
 ## Parfumo connection
 
-In **Settings → Parfumo account**, choose **Connect Parfumo** to open Parfumo's site in a separate app window. Sign in there, return to Settings, and choose **Save session**. Scentkeep saves the site's cookies in the operating system's keyring for future import features. The password is entered on Parfumo's site; Scentkeep does not store it or expose cookies to the frontend. **Disconnect** removes the saved session. If Parfumo expires the session, sign in and save it again. Importing data from Parfumo is not yet implemented.
+In **Settings → Parfumo account**, choose **Connect Parfumo** to open Parfumo's site in a separate app window. Sign in there, return to Settings, and choose **Save session**. Scentkeep saves the site's cookies in the operating system's keyring for note search. The password is entered on Parfumo's site; Scentkeep does not store it or expose cookies to the frontend. **Disconnect** removes the saved session. If Parfumo expires the session, sign in and save it again.
+
+If Cloudflare verification remains on screen, Scentkeep cannot save a usable session or force the verification to complete. Use **Reset browser data** in Settings to clear the embedded Parfumo browser's cookies and storage, then reconnect. If the challenge still loops, try another network or contact Parfumo with the Ray ID shown on the challenge page. Perfume notes can still be added manually by name.
 
 ## Install
 

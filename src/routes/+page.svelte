@@ -532,6 +532,17 @@
     } catch (e) { error = `Could not disconnect Parfumo: ${String(e)}`; }
     finally { parfumoBusy = false; }
   }
+  async function resetParfumoBrowser() {
+    if (!window.confirm('Clear the embedded Parfumo browser data and close its window?')) return;
+    parfumoBusy = true; error = ''; success = '';
+    try {
+      await backend.resetParfumoBrowser();
+      parfumoLoginOpen = false;
+      parfumoStatus = { connected: false, cookieCount: 0 };
+      success = 'Parfumo browser data cleared. Open Parfumo again to retry.';
+    } catch (cause) { error = `Could not reset Parfumo browser: ${String(cause)}`; }
+    finally { parfumoBusy = false; }
+  }
   function startNew() {
     fragrance = { ...blank(), shelf: activeShelf };
     mobileSidebarOpen = false;
@@ -807,12 +818,14 @@
           </form>
         </section>
         <section class="settings-card parfumo-card" aria-labelledby="parfumo-settings-title">
-          <div class="settings-card-header"><div><h2 id="parfumo-settings-title">Parfumo account</h2><p>Sign in on Parfumo and save the browser session for future imports.</p></div><span class:configured={parfumoStatus?.connected} class="backup-status">{parfumoStatus?.connected ? 'Session saved' : 'Not connected'}</span></div>
+          <div class="settings-card-header"><div><h2 id="parfumo-settings-title">Parfumo account</h2><p>Sign in on Parfumo and save the browser session to search its notes.</p></div><span class:configured={parfumoStatus?.connected} class="backup-status">{parfumoStatus?.connected ? 'Session saved' : 'Not connected'}</span></div>
           <p class="settings-hint">{#if parfumoLoginOpen}After signing in on Parfumo, return here and save the session.{:else if parfumoStatus?.connected}Your session is saved in the system keyring. Open Parfumo to refresh it, or disconnect to remove it.{:else}Open Parfumo and sign in there to connect your account.{/if}</p>
+          <p class="settings-hint">If Cloudflare verification stays stuck, reset this browser's data and try again. If it still fails, try another network or contact Parfumo with the Ray ID shown on the page. You can still add notes by name.</p>
           <div class="parfumo-actions">
             <button class="primary-button" type="button" disabled={parfumoBusy || !isTauri()} onclick={openParfumoLogin}>{parfumoStatus?.connected ? 'Open Parfumo' : 'Connect Parfumo'}</button>
             {#if parfumoLoginOpen}<button class="parfumo-save-button" type="button" disabled={parfumoBusy} onclick={saveParfumoConnection}>{parfumoStatus?.connected ? 'Update session' : 'Save session'}</button>{/if}
             {#if parfumoStatus?.connected}<button class="parfumo-disconnect-button" type="button" disabled={parfumoBusy} onclick={disconnectParfumo}>Disconnect</button>{/if}
+            {#if parfumoStatus && !parfumoStatus.connected}<button class="back-button" type="button" disabled={parfumoBusy} onclick={resetParfumoBrowser}>Reset browser data</button>{/if}
           </div>
         </section>
       </div>
