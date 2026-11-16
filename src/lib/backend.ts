@@ -1,4 +1,52 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { writable } from 'svelte/store';
+
+const taskLabels: Record<string, string> = {
+  list_fragrances: 'Loading fragrances…',
+  list_note_images: 'Loading perfume notes…',
+  save_fragrance: 'Saving fragrance…',
+  update_fragrance: 'Saving changes…',
+  delete_fragrance: 'Deleting fragrance…',
+  create_note: 'Adding note…',
+  search_parfumo_notes: 'Searching Parfumo…',
+  save_parfumo_note: 'Saving Parfumo note…',
+  rename_note: 'Renaming note…',
+  delete_note: 'Deleting note…',
+  set_note_image: 'Saving note image…',
+  remove_note_image: 'Removing note image…',
+  get_backup_folder: 'Loading backup settings…',
+  set_backup_folder: 'Setting up local backups…',
+  get_webdav_backup: 'Loading WebDAV settings…',
+  set_webdav_backup: 'Connecting WebDAV backup…',
+  disconnect_webdav_backup: 'Disconnecting WebDAV backup…',
+  sync_from_webdav: 'Syncing from WebDAV…',
+  backup_status: 'Checking backup status…',
+  retry_backup: 'Retrying backup…',
+  export_fragrances_csv: 'Exporting fragrances…',
+  import_fragrances_csv: 'Importing fragrances…',
+  export_notes_csv: 'Exporting notes…',
+  import_notes_csv: 'Importing notes…',
+  parfumo_status: 'Checking Parfumo connection…',
+  open_parfumo_login: 'Opening Parfumo…',
+  save_parfumo_session: 'Saving Parfumo session…',
+  disconnect_parfumo: 'Disconnecting Parfumo…'
+};
+
+const pendingTasks = new Map<number, string>();
+let nextTaskId = 0;
+export const activeBackendTasks = writable<string[]>([]);
+
+async function invoke<T>(command: string, args?: Parameters<typeof tauriInvoke>[1]): Promise<T> {
+  const taskId = ++nextTaskId;
+  pendingTasks.set(taskId, taskLabels[command] ?? 'Working…');
+  activeBackendTasks.set([...pendingTasks.values()]);
+  try {
+    return await tauriInvoke<T>(command, args);
+  } finally {
+    pendingTasks.delete(taskId);
+    activeBackendTasks.set([...pendingTasks.values()]);
+  }
+}
 
 export type Fragrance = {
   id?: number; collection: string; name: string; brand: string; year: number;
@@ -14,6 +62,7 @@ export type CsvImportReport = { imported: number; duplicates: string[] };
 export type ParfumoStatus = { connected: boolean; cookieCount: number };
 export type WebdavBackup = { url: string; username: string; needsSync: boolean };
 export type WebdavSyncReport = { fragrancesAdded: number; fragrancesUpdated: number; notesAdded: number; notesUpdated: number };
+export type BackupStatus = { state: 'idle' | 'queued' | 'running' | 'error'; error: string | null };
 
 export const backend = {
   listFragrances: () => invoke<Fragrance[]>('list_fragrances'),
@@ -34,6 +83,8 @@ export const backend = {
   setWebdavBackup: (url: string, username: string, password: string) => invoke<WebdavBackup>('set_webdav_backup', { url, username, password }),
   disconnectWebdavBackup: () => invoke<void>('disconnect_webdav_backup'),
   syncFromWebdav: () => invoke<WebdavSyncReport>('sync_from_webdav'),
+  getBackupStatus: () => invoke<BackupStatus>('backup_status'),
+  retryBackup: () => invoke<void>('retry_backup'),
   exportFragrancesCsv: (path: string) => invoke<void>('export_fragrances_csv', { path }),
   importFragrancesCsv: (content: string) => invoke<CsvImportReport>('import_fragrances_csv', { content }),
   exportNotesCsv: (path: string) => invoke<void>('export_notes_csv', { path }),

@@ -3,11 +3,72 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 use url::Url;
 
 static BACKUP_LOCK: Mutex<()> = Mutex::new(());
+static BACKUP_QUEUE: Mutex<BackupQueue> = Mutex::new(BackupQueue { revision: 0, pending: false, running: false, error: None });
 const WEBDAV_SERVICE: &str = "com.scentkeep.app.webdav";
 const WEBDAV_USER: &str = "backup";
+
+struct BackupQueue {
+    revision: u64,
+    pending: bool,
+    running: bool,
+    error: Option<String>,
+}
+
+impl BackupQueue {
+    fn enqueue(&mut self) -> bool {
+        let start_worker = !self.running;
+        self.revision += 1;
+        self.pending = true;
+        self.running = true;
+        self.error = None;
+        start_worker
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub(super) struct BackupStatus {
+    state: &'static str,
+    error: Option<String>,
+}
+
+fn queue_status(queue: &BackupQueue) -> BackupStatus {
+    let state = if queue.error.is_some() { "error" } else if queue.running { "running" } else if queue.pending { "queued" } else { "idle" };
+    BackupStatus { state, error: queue.error.clone() }
+}
+
+fn pending_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(|error| error.to_string())?.join("backup-pending"))
+}
+
+fn emit_status(app: &tauri::AppHandle, status: BackupStatus) {
+    let _ = app.emit("backup-status", status);
+}
+
+#[tauri::command]
+pub(super) fn backup_status() -> Result<BackupStatus, String> {
+    let queue = BACKUP_QUEUE.lock().map_err(|error| error.to_string())?;
+    Ok(queue_status(&queue))
+}
+
+#[tauri::command]
+pub(super) fn retry_backup(app: tauri::AppHandle) -> Result<(), String> {
+    after_change(&app)
+}
+
+pub(super) fn resume_backups(app: &tauri::AppHandle) {
+    if pending_path(app).is_ok_and(|path| path.exists()) {
+        if let Err(error) = after_change(app) {
+            if let Ok(mut queue) = BACKUP_QUEUE.lock() {
+                queue.error = Some(error);
+                emit_status(app, queue_status(&queue));
+            }
+        }
+    }
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -147,6 +208,7 @@ pub(super) fn sync_from_webdav(app: tauri::AppHandle) -> Result<csv_io::SyncRepo
         std::fs::write(webdav_setting_path(&app)?, serde_json::to_vec(&config).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
     }
+    after_change(&app)?;
     Ok(report)
 }
 
@@ -192,31 +254,89 @@ pub(super) fn set_backup_folder(app: tauri::AppHandle, folder: String) -> Result
 }
 
 pub(super) fn after_change(app: &tauri::AppHandle) -> Result<(), String> {
+    let has_local = configured_folder(app)?.is_some();
+    let has_webdav = configured_webdav(app)?.is_some_and(|config| !config.needs_sync);
+    if !has_local && !has_webdav { return Ok(()); }
+    let mut queue = BACKUP_QUEUE.lock().map_err(|error| error.to_string())?;
+    let path = pending_path(app)?;
+    std::fs::create_dir_all(path.parent().ok_or("Invalid backup status path")?).map_err(|error| error.to_string())?;
+    std::fs::write(&path, b"pending").map_err(|error| format!("Your change was saved, but backups could not be queued: {error}"))?;
+    let start_worker = queue.enqueue();
+    let status = queue_status(&queue);
+    drop(queue);
+    emit_status(app, status);
+    if start_worker {
+        let worker_app = app.clone();
+        if let Err(error) = std::thread::Builder::new().name("scentkeep-backup".into()).spawn(move || run_backup_queue(worker_app)) {
+            let mut queue = BACKUP_QUEUE.lock().map_err(|lock_error| lock_error.to_string())?;
+            queue.running = false;
+            queue.error = Some(format!("Could not start backup worker: {error}"));
+            emit_status(app, queue_status(&queue));
+            return Err(format!("Your change was saved, but backups could not start: {error}"));
+        }
+    }
+    Ok(())
+}
+
+fn run_backup_queue(app: tauri::AppHandle) {
+    loop {
+        let revision = match BACKUP_QUEUE.lock() {
+            Ok(mut queue) => {
+                queue.pending = false;
+                queue.revision
+            },
+            Err(_) => return,
+        };
+        emit_status(&app, BackupStatus { state: "running", error: None });
+        let result = perform_backups(&app);
+        let mut queue = match BACKUP_QUEUE.lock() { Ok(queue) => queue, Err(_) => return };
+        if queue.revision != revision {
+            queue.pending = true;
+            continue;
+        }
+        let result = result.and_then(|()| {
+            let path = pending_path(&app)?;
+            if path.exists() { std::fs::remove_file(path).map_err(|error| error.to_string())?; }
+            Ok(())
+        });
+        queue.running = false;
+        queue.pending = result.is_err();
+        queue.error = result.err();
+        let status = queue_status(&queue);
+        drop(queue);
+        emit_status(&app, status);
+        return;
+    }
+}
+
+fn perform_backups(app: &tauri::AppHandle) -> Result<(), String> {
+    let _guard = BACKUP_LOCK.lock().map_err(|error| error.to_string())?;
     let mut errors = Vec::new();
     if let Some(folder) = configured_folder(app)? {
-        if let Err(error) = write_backup(app, &folder) {
+        if let Err(error) = write_backup_locked(app, &folder) {
             errors.push(format!("local CSV backup failed: {error}"));
         }
     }
     if let Some(config) = configured_webdav(app)? {
-        if config.needs_sync {
-            errors.push("WebDAV upload is waiting for Sync from WebDAV on the collection page".into());
-        } else {
-        let result = (|| {
-            let _guard = BACKUP_LOCK.lock().map_err(|e| e.to_string())?;
-            let password = webdav_entry()?.get_password()
-                .map_err(|e| format!("Could not read the WebDAV password from the system keyring: {e}"))?;
-            let conn = database(app)?;
-            upload_webdav(&config, &password, csv_io::fragrance_csv(&conn)?, csv_io::note_csv(&conn)?)
-        })();
-        if let Err(error) = result { errors.push(format!("WebDAV backup failed: {error}")); }
+        if !config.needs_sync {
+            let result = (|| {
+                let password = webdav_entry()?.get_password()
+                    .map_err(|e| format!("Could not read the WebDAV password from the system keyring: {e}"))?;
+                let conn = database(app)?;
+                upload_webdav(&config, &password, csv_io::fragrance_csv(&conn)?, csv_io::note_csv(&conn)?)
+            })();
+            if let Err(error) = result { errors.push(format!("WebDAV backup failed: {error}")); }
         }
     }
-    if errors.is_empty() { Ok(()) } else { Err(format!("Your change was saved, but {}", errors.join("; "))) }
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
 }
 
 fn write_backup(app: &tauri::AppHandle, folder: &Path) -> Result<(), String> {
     let _guard = BACKUP_LOCK.lock().map_err(|e| e.to_string())?;
+    write_backup_locked(app, folder)
+}
+
+fn write_backup_locked(app: &tauri::AppHandle, folder: &Path) -> Result<(), String> {
     if !folder.is_dir() {
         return Err(format!(
             "Backup folder is unavailable: {}",
@@ -249,7 +369,18 @@ fn write_csv(path: PathBuf, content: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::webdav_url;
+    use super::{webdav_url, BackupQueue};
+
+    #[test]
+    fn queued_changes_share_one_worker_and_keep_latest_revision() {
+        let mut queue = BackupQueue { revision: 0, pending: false, running: false, error: None };
+        assert!(queue.enqueue());
+        let first_revision = queue.revision;
+        queue.pending = false;
+        assert!(!queue.enqueue());
+        assert!(queue.pending);
+        assert!(queue.revision > first_revision);
+    }
 
     #[test]
     fn webdav_url_keeps_uploads_inside_the_selected_folder() {

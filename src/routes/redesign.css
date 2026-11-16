@@ -110,7 +110,7 @@ input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 
 .card-dropdown, .category-options, .note-suggestions, .parfumo-note-results { position: absolute; z-index: 20; padding: var(--space-xs); border: 0; background: var(--color-card); box-shadow: 0 12px 28px var(--color-shadow); }
 .card-dropdown { top: 42px; right: 0; min-width: 150px; }
 .card-dropdown button, .category-options button, .note-suggestions button, .parfumo-note-results button { display: block; width: 100%; min-height: 36px; padding: var(--space-xs) var(--space-xs); border: 0; background: transparent; color: var(--color-ink-2); text-align: left; font-size: 13px; }
-.card-dropdown button:hover, .category-options button:hover, .note-suggestions button:hover, .note-suggestions button.highlighted, .parfumo-note-results button:hover { background: var(--color-paper-2); }
+.card-dropdown button:hover, .category-options button:hover, .note-suggestions button:hover, .note-suggestions button.highlighted, .parfumo-note-results button:hover, .parfumo-note-results button.highlighted { background: var(--color-paper-2); }
 .delete-action, .danger { color: var(--color-error) !important; }
 .list-layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
 .list-layout .fragrance-card { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 20px; align-items: center; padding: var(--space-sm) 0; border-bottom: 1px solid var(--color-rule); }
@@ -163,6 +163,10 @@ input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 
 .form-footer > div { display: flex; gap: var(--space-xs); }
 .save-spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: save-spin .8s linear infinite; }
 .save-status { margin-top: var(--space-xs); color: var(--color-muted); font-size: 12px; }
+.background-task { position: fixed; right: var(--space-md); bottom: var(--space-md); z-index: 110; display: flex; align-items: center; gap: var(--space-xs); max-width: min(320px, calc(100vw - 32px)); padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-rule); border-radius: 3px; background: var(--color-card); box-shadow: 0 12px 28px var(--color-shadow); color: var(--color-ink); font-size: 13px; pointer-events: none; }
+.background-task .save-spinner { flex: none; }
+.background-task.backup-task-error { pointer-events: auto; color: var(--color-error); }
+.backup-task-error button { flex: none; border: 0; background: transparent; color: inherit; text-decoration: underline; }
 @keyframes save-spin { to { transform: rotate(360deg); } }
 .note-section { padding: 20px 0 var(--space-lg); border-top: 1px solid var(--color-rule); }
 .note-title { margin-bottom: var(--space-sm); }
@@ -223,6 +227,7 @@ input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 
 .parfumo-note-results img, .parfumo-result-placeholder { width: 34px; height: 34px; object-fit: cover; }
 .parfumo-note-results small { display: block; color: var(--color-muted); font-size: 11px; }
 .parfumo-note-results p { padding: var(--space-xs) var(--space-xs); font-size: 12px; }
+.parfumo-save-status { display: flex; align-items: center; gap: var(--space-xs); margin: calc(-1 * var(--space-xs)) 0 var(--space-md); color: var(--color-muted); font-size: 12px; }
 .note-source-tip { max-width: 65ch; margin: var(--space-xs) 0 20px; color: var(--color-muted); font-size: 13px; }
 .note-source-link { display: inline-block; margin: var(--space-xs) 0; font-size: 12px; }
 .library-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); margin: var(--space-lg) 0; color: var(--color-muted); font-size: 12px; }

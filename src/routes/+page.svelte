@@ -3,10 +3,12 @@
   import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { isTauri } from '@tauri-apps/api/core';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { check, type Update } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
-  import { backend, type CsvImportReport, type Fragrance, type NoteImage, type ParfumoNote, type ParfumoStatus, type WebdavBackup } from '$lib/backend';
+  import { activeBackendTasks, backend, type BackupStatus, type CsvImportReport, type Fragrance, type NoteImage, type ParfumoNote, type ParfumoStatus, type WebdavBackup } from '$lib/backend';
   import NavIcon from '$lib/NavIcon.svelte';
   import './redesign.css';
 
@@ -46,6 +48,11 @@
   let error = $state('');
   let success = $state('');
   let saving = $state(false);
+  let visibleBackendTask = $state('');
+  let backupStatus = $state<BackupStatus>({ state: 'idle', error: null });
+  let showBackupProgress = $state(false);
+  let closeBackupDialogOpen = $state(false);
+  let allowCloseWithPendingBackup = false;
   let search = $state('');
   let collectionFilter = $state<'All' | 'Owned' | 'Wishlist' | 'Empties'>('All');
   let collectionLayout = $state<'grid' | 'list'>('grid');
@@ -86,6 +93,7 @@
   ];
   const sexIconFor = (audience: string) => categories.find((category) => category.value === audience)?.icon ?? '/unisex-symbol-color-icon.svg';
   const allNotes = $derived(noteImages.map((note) => note.name).sort((a, b) => a.localeCompare(b)));
+  const noteImagesByName = $derived(new Map(noteImages.map((note) => [note.name.toLocaleLowerCase(), note])));
   const brandSuggestions = $derived.by(() => {
     const query = fragrance.brand.trim().toLocaleLowerCase();
     if (!query) return [];
@@ -106,6 +114,25 @@
   const visibleNotes = $derived(allNotes.filter((note) => note.toLocaleLowerCase().includes(noteSearch.toLocaleLowerCase())));
   const selectedFragrance = $derived(entries.find((item) => item.id === selectedId));
   const visibleEntries = $derived(entries.filter((item) => (activeShelf === 'Collection' ? (collectionFilter === 'All' || (collectionFilter === 'Owned' ? item.shelf === 'Collection' : item.shelf === collectionFilter)) : item.shelf === activeShelf) && `${item.name} ${item.brand} ${item.collection}`.toLowerCase().includes(search.toLowerCase())));
+
+  $effect(() => {
+    const tasks = $activeBackendTasks;
+    if (tasks.length === 0) {
+      visibleBackendTask = '';
+      return;
+    }
+    const timer = setTimeout(() => visibleBackendTask = tasks[tasks.length - 1], 350);
+    return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    if (backupStatus.state !== 'running' && backupStatus.state !== 'queued') {
+      showBackupProgress = false;
+      return;
+    }
+    const timer = setTimeout(() => showBackupProgress = true, 350);
+    return () => clearTimeout(timer);
+  });
 
   $effect(() => {
     const query = newNoteName.trim();
@@ -152,6 +179,40 @@
       void checkForUpdates(true);
     }
   });
+
+  onMount(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let backupEventCount = 0;
+    let stopBackupEvents: (() => void) | undefined;
+    let stopCloseEvents: (() => void) | undefined;
+    void (async () => {
+      stopBackupEvents = await listen<BackupStatus>('backup-status', (event) => {
+        backupEventCount += 1;
+        backupStatus = event.payload;
+        if (backupStatus.state !== 'running' && backupStatus.state !== 'queued') closeBackupDialogOpen = false;
+      });
+      if (disposed) { stopBackupEvents(); return; }
+      const eventsBeforeStatus = backupEventCount;
+      const initialBackupStatus = await backend.getBackupStatus();
+      if (backupEventCount === eventsBeforeStatus) backupStatus = initialBackupStatus;
+      stopCloseEvents = await getCurrentWindow().onCloseRequested((event) => {
+        if (allowCloseWithPendingBackup) return;
+        if (backupStatus.state === 'running' || backupStatus.state === 'queued') {
+          event.preventDefault();
+          closeBackupDialogOpen = true;
+        }
+      });
+      if (disposed) stopCloseEvents();
+    })().catch((cause) => error = `Could not monitor backups: ${String(cause)}`);
+    return () => { disposed = true; stopBackupEvents?.(); stopCloseEvents?.(); };
+  });
+
+  async function closeWithPendingBackup() {
+    allowCloseWithPendingBackup = true;
+    try { await getCurrentWindow().close(); }
+    catch (cause) { allowCloseWithPendingBackup = false; error = `Could not close the app: ${String(cause)}`; }
+  }
 
   function editProfile() { draftProfileName = profileName; draftProfilePicture = profilePicture; profilePictureUrl = profilePicture.startsWith('http') ? profilePicture : ''; profileDialogOpen = true; }
   function saveProfile() { profileName = draftProfileName.trim() || 'Scentkeeper'; profilePicture = draftProfilePicture; localStorage.setItem('scentkeep.profile.name', profileName); localStorage.setItem('scentkeep.profile.picture', profilePicture); profileDialogOpen = false; }
@@ -278,6 +339,7 @@
     finally { csvBusy = false; }
   }
   async function createNote() {
+    if (savingParfumoNote) return;
     error = ''; success = '';
     try {
       await backend.createNote(newNoteName);
@@ -307,6 +369,7 @@
     }
   }
   async function selectParfumoNote(note: ParfumoNote) {
+    if (savingParfumoNote) return;
     error = ''; success = ''; savingParfumoNote = true; parfumoResultsOpen = false; highlightedParfumoIndex = -1;
     try {
       await backend.saveParfumoNote(note);
@@ -335,7 +398,14 @@
     } catch (e) { error = String(e); }
   }
   function imageFor(note: string) {
-    return noteImages.find((image) => image.name.toLocaleLowerCase() === note.toLocaleLowerCase())?.imageUrl;
+    return noteImagesByName.get(note.toLocaleLowerCase())?.imageUrl;
+  }
+  function parfumoThumbnail(imageUrl: string) {
+    if (!imageUrl.startsWith('https://media.parfumo.com/notes_png/')) return imageUrl;
+    const thumbnail = new URL(imageUrl);
+    thumbnail.searchParams.set('width', '64');
+    thumbnail.searchParams.set('aspect_ratio', '1:1');
+    return thumbnail.toString();
   }
   async function setNoteImage(note: string) {
     const imageUrl = (noteImageDrafts[note] ?? '').trim();
@@ -514,6 +584,13 @@
 </svelte:head>
 
 <div class="app-shell" class:sidebar-collapsed={sidebarCollapsed} class:mobile-sidebar-open={mobileSidebarOpen}>
+  {#if showBackupProgress}
+    <div class="background-task" role="status"><span class="save-spinner" aria-hidden="true"></span>Backing up in the background…</div>
+  {:else if backupStatus.state === 'error'}
+    <div class="background-task backup-task-error" role="alert"><span>Backup failed: {backupStatus.error}</span><button type="button" onclick={() => backend.retryBackup().catch((cause) => error = String(cause))}>Retry</button></div>
+  {:else if visibleBackendTask}
+    <div class="background-task" role="status"><span class="save-spinner" aria-hidden="true"></span>{visibleBackendTask}</div>
+  {/if}
   <aside class="sidebar" aria-label="Main navigation">
     <button class="drawer-close" type="button" aria-label="Close navigation" onclick={() => mobileSidebarOpen = false}><NavIcon name="back" /></button>
     <button class="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!sidebarCollapsed} onclick={() => sidebarCollapsed = !sidebarCollapsed}><NavIcon name={sidebarCollapsed ? 'forward' : 'back'} /></button>
@@ -635,7 +712,7 @@
           {/if}
         </div>
         <div class="form-footer"><span>Fields marked <b>*</b> are required</span><div>{#if step > 0}<button class="back-button" disabled={saving} onclick={() => { step -= 1; error = ''; }}>← Back</button>{/if}{#if step < 2}<button class="primary-button" onclick={next}>Continue</button>{:else}<button class="primary-button" disabled={saving} onclick={save}>{#if saving}<span class="save-spinner" aria-hidden="true"></span>Saving…{:else}{fragrance.id === undefined ? 'Save fragrance' : 'Save changes'}{/if}</button>{/if}</div></div>
-        {#if saving}<p class="save-status" role="status">Saving your fragrance and finishing backups. This may take a moment.</p>{/if}
+        {#if saving}<p class="save-status" role="status">Saving your fragrance…</p>{/if}
       </div>
     {:else if view === 'detail' && selectedFragrance}
       <div class="page-content detail-page">
@@ -661,9 +738,10 @@
         {#if csvReport?.kind === 'notes'}<div class="message import-result" role="status"><strong>Imported {csvReport.result.imported} {csvReport.result.imported === 1 ? 'note' : 'notes'}.</strong>{#if csvReport.result.duplicates.length}<p>Skipped {csvReport.result.duplicates.length} duplicate {csvReport.result.duplicates.length === 1 ? 'note' : 'notes'}:</p><ul>{#each csvReport.result.duplicates as duplicate}<li>{duplicate}</li>{/each}</ul>{/if}</div>{/if}
         <div class="parfumo-note-search">
           <form class="new-note-form" onsubmit={(event) => { event.preventDefault(); createNote(); parfumoResultsOpen = false; }}>
-            <input aria-label="Search Parfumo or enter a note name" role="combobox" aria-autocomplete="list" aria-expanded={parfumoResultsOpen && parfumoStatus?.connected && newNoteName.trim().length >= 2} aria-controls={parfumoResultsOpen && parfumoStatus?.connected && newNoteName.trim().length >= 2 ? 'parfumo-note-results' : undefined} aria-activedescendant={parfumoResultsOpen && highlightedParfumoIndex >= 0 && !searchingParfumoNotes ? `parfumo-note-option-${highlightedParfumoIndex}` : undefined} autocomplete="off" placeholder="Search Parfumo notes or add your own..." bind:value={newNoteName} onfocus={() => { parfumoResultsOpen = true; highlightedParfumoIndex = -1; }} oninput={() => { parfumoResultsOpen = true; highlightedParfumoIndex = -1; }} onkeydown={handleParfumoNoteKeydown} />
+            <input aria-label="Search Parfumo or enter a note name" role="combobox" aria-autocomplete="list" aria-expanded={parfumoResultsOpen && parfumoStatus?.connected && newNoteName.trim().length >= 2} aria-controls={parfumoResultsOpen && parfumoStatus?.connected && newNoteName.trim().length >= 2 ? 'parfumo-note-results' : undefined} aria-activedescendant={parfumoResultsOpen && highlightedParfumoIndex >= 0 && !searchingParfumoNotes ? `parfumo-note-option-${highlightedParfumoIndex}` : undefined} autocomplete="off" placeholder="Search Parfumo notes or add your own..." disabled={savingParfumoNote} bind:value={newNoteName} onfocus={() => { parfumoResultsOpen = true; highlightedParfumoIndex = -1; }} oninput={() => { parfumoResultsOpen = true; highlightedParfumoIndex = -1; }} onkeydown={handleParfumoNoteKeydown} />
             <button type="submit" disabled={!newNoteName.trim() || savingParfumoNote}>+ Add note</button>
           </form>
+          {#if savingParfumoNote}<p class="parfumo-save-status" role="status"><span class="save-spinner" aria-hidden="true"></span>Saving note…</p>{/if}
           {#if parfumoStatus?.connected && newNoteName.trim().length >= 2 && parfumoResultsOpen}
             <div class="parfumo-note-results" id="parfumo-note-results" role="listbox" aria-label="Parfumo note results">
               <div class="suggestions-heading">Parfumo notes</div>
@@ -672,7 +750,7 @@
               {:else if parfumoNotes.length === 0}<p>No matching Parfumo notes.</p>
               {:else}{#each parfumoNotes as note, index}
                 <button type="button" id={`parfumo-note-option-${index}`} role="option" aria-selected={highlightedParfumoIndex === index} class:highlighted={highlightedParfumoIndex === index} tabindex="-1" disabled={savingParfumoNote} onclick={() => selectParfumoNote(note)}>
-                  {#if note.imageUrl}<img src={note.imageUrl} alt="" />{:else}<span class="parfumo-result-placeholder"><NavIcon name="notes" size={18} /></span>{/if}
+                  {#if note.imageUrl}<img src={parfumoThumbnail(note.imageUrl)} alt="" loading="lazy" decoding="async" />{:else}<span class="parfumo-result-placeholder"><NavIcon name="notes" size={18} /></span>{/if}
                   <span>{note.name}<small>Save Parfumo note</small></span>
                 </button>
               {/each}{/if}
@@ -684,7 +762,26 @@
         {#if visibleNotes.length === 0}
           <div class="empty-state"><div><NavIcon name="notes" size={48} /></div><h2>{allNotes.length === 0 ? 'No notes in your collection yet' : 'No notes found'}</h2><p>{allNotes.length === 0 ? 'Add a note above, or add notes to a fragrance.' : 'Try another search term.'}</p>{#if allNotes.length === 0}<button class="primary-button" onclick={startNew}>Add a fragrance</button>{/if}</div>
         {:else}
-          <div class="notes-grid">{#each visibleNotes as note}<article class="note-card"><div class="note-art">{#if imageFor(note)}<img src={imageFor(note)} alt={note} />{:else}<NavIcon name="notes" size={48} />{/if}</div><div class="note-card-body">{#if editingNote === note}<form class="rename-note-form" onsubmit={(event) => { event.preventDefault(); renameNote(note); }}><input aria-label={`Rename ${note}`} bind:value={editedNoteName} /><button type="submit" disabled={!editedNoteName.trim()}>Save</button><button type="button" onclick={() => editingNote = ''}>Cancel</button></form>{:else}<h2>{note}</h2>{/if}<p>Used in {noteImages.find((image) => image.name === note)?.usageCount ?? 0} fragrances</p>{#if noteImages.find((image) => image.name === note)?.parfumoUrl}<a class="note-source-link" href={noteImages.find((image) => image.name === note)?.parfumoUrl} target="_blank" rel="noreferrer">View on Parfumo</a>{/if}<form class="note-image-form" onsubmit={(event) => { event.preventDefault(); setNoteImage(note); }}><input type="url" aria-label={`Image link for ${note}`} placeholder="https://example.com/note.jpg" value={noteImageDrafts[note] ?? ''} oninput={(event) => noteImageDrafts[note] = event.currentTarget.value} /><div><button type="submit" disabled={savingNoteImage === note || !noteImageDrafts[note]?.trim()}>{savingNoteImage === note ? 'Saving…' : imageFor(note) ? 'Update image link' : '+ Add image link'}</button>{#if imageFor(note)}<button type="button" onclick={() => removeNoteImage(note)}>Remove image</button>{/if}</div></form><div class="note-manage-actions"><button onclick={() => { editingNote = note; editedNoteName = note; }}>Rename</button><button class="danger" onclick={() => deleteNote(note)}>Delete note</button></div></div></article>{/each}</div>
+          <div class="notes-grid">
+            {#each visibleNotes as note (note)}
+              {@const noteInfo = noteImagesByName.get(note.toLocaleLowerCase())}
+              <article class="note-card">
+                <div class="note-art">{#if noteInfo?.imageUrl}<img src={noteInfo.imageUrl} alt={note} loading="lazy" decoding="async" />{:else}<NavIcon name="notes" size={48} />{/if}</div>
+                <div class="note-card-body">
+                  {#if editingNote === note}
+                    <form class="rename-note-form" onsubmit={(event) => { event.preventDefault(); renameNote(note); }}><input aria-label={`Rename ${note}`} bind:value={editedNoteName} /><button type="submit" disabled={!editedNoteName.trim()}>Save</button><button type="button" onclick={() => editingNote = ''}>Cancel</button></form>
+                  {:else}<h2>{note}</h2>{/if}
+                  <p>Used in {noteInfo?.usageCount ?? 0} fragrances</p>
+                  {#if noteInfo?.parfumoUrl}<a class="note-source-link" href={noteInfo.parfumoUrl} target="_blank" rel="noreferrer">View on Parfumo</a>{/if}
+                  <form class="note-image-form" onsubmit={(event) => { event.preventDefault(); setNoteImage(note); }}>
+                    <input type="url" aria-label={`Image link for ${note}`} placeholder="https://example.com/note.jpg" value={noteImageDrafts[note] ?? ''} oninput={(event) => noteImageDrafts[note] = event.currentTarget.value} />
+                    <div><button type="submit" disabled={savingNoteImage === note || !noteImageDrafts[note]?.trim()}>{savingNoteImage === note ? 'Saving…' : noteInfo?.imageUrl ? 'Update image link' : '+ Add image link'}</button>{#if noteInfo?.imageUrl}<button type="button" onclick={() => removeNoteImage(note)}>Remove image</button>{/if}</div>
+                  </form>
+                  <div class="note-manage-actions"><button onclick={() => { editingNote = note; editedNoteName = note; }}>Rename</button><button class="danger" onclick={() => deleteNote(note)}>Delete note</button></div>
+                </div>
+              </article>
+            {/each}
+          </div>
         {/if}
       </div>
     {:else if view === 'settings'}
@@ -693,13 +790,13 @@
         {#if success}<div class="message success" role="status">{success}</div>{/if}
         {#if error}<div class="message error" role="alert">{error}</div>{/if}
         <section class="settings-card" aria-labelledby="backup-settings-title">
-          <div class="settings-card-header"><div><h2 id="backup-settings-title">Automatic backups</h2><p>Fragrances and notes are saved as CSV files after every change.</p></div><span class:configured={!!backupFolder} class="backup-status">{backupFolder ? 'On' : 'Not set'}</span></div>
+          <div class="settings-card-header"><div><h2 id="backup-settings-title">Automatic backups</h2><p>Fragrances and notes are backed up as CSV files in the background after each change.</p></div><span class:configured={!!backupFolder} class="backup-status">{backupFolder ? 'On' : 'Not set'}</span></div>
           <div class="settings-field"><span>Backup folder</span><code>{backupFolder ?? 'No folder selected'}</code></div>
           <p class="settings-hint">{#if backupFolder}Files: scentkeep-fragrances.csv and scentkeep-notes.csv{:else}Choose a folder to start automatic backups.{/if}</p>
           <button class="primary-button" type="button" disabled={choosingBackupFolder || !isTauri()} onclick={chooseBackupFolder}>{choosingBackupFolder ? 'Choosing…' : backupFolder ? 'Change folder' : 'Choose folder'}</button>
         </section>
         <section class="settings-card webdav-card" aria-labelledby="webdav-settings-title">
-          <div class="settings-card-header"><div><h2 id="webdav-settings-title">WebDAV backup</h2><p>Upload the same two CSV files to an HTTPS WebDAV folder after every change.</p></div><span class:configured={!!webdavBackup} class="backup-status">{webdavBackup ? 'Connected' : 'Not connected'}</span></div>
+          <div class="settings-card-header"><div><h2 id="webdav-settings-title">WebDAV backup</h2><p>Upload the same two CSV files to an HTTPS WebDAV folder in the background.</p></div><span class:configured={!!webdavBackup} class="backup-status">{webdavBackup ? 'Connected' : 'Not connected'}</span></div>
           {#if webdavBackup?.needsSync}<p class="settings-hint">This folder already has backups. Open your collection and select Sync from WebDAV before making changes; uploads are paused until then.</p>{/if}
           <form class="webdav-form" onsubmit={saveWebdavBackup}>
             <label class="field">WebDAV folder URL<input type="url" required placeholder="https://cloud.example.com/remote.php/dav/files/you/Scentkeep/" bind:value={webdavUrl} disabled={webdavBusy || !isTauri()} /></label>
@@ -741,13 +838,26 @@
     <dialog open class="profile-dialog" aria-labelledby="backup-title">
       <div class="eyebrow">AUTOMATIC BACKUPS</div>
       <h2 id="backup-title">Set up automatic backups</h2>
-      <p>After every change, Scentkeep saves your fragrances and notes as two CSV files in a local folder or WebDAV folder.</p>
+      <p>After every change, Scentkeep backs up your fragrances and notes as two CSV files in a local folder or WebDAV folder without delaying your save.</p>
       {#if backupFolder}<p class="backup-path">Current folder: {backupFolder}</p>{/if}
       {#if error}<div class="message error" role="alert">{error}</div>{/if}
       <div class="dialog-actions">
         <button class="back-button" type="button" onclick={() => backupDialogOpen = false}>Later</button>
         <button class="back-button" type="button" onclick={() => { backupDialogOpen = false; view = 'settings'; }}>Set up WebDAV</button>
         <button class="primary-button" type="button" disabled={choosingBackupFolder} onclick={chooseBackupFolder}>{choosingBackupFolder ? 'Choosing…' : 'Choose folder'}</button>
+      </div>
+    </dialog>
+  </div>
+{/if}
+
+{#if closeBackupDialogOpen}
+  <div class="dialog-backdrop" role="presentation">
+    <dialog open class="profile-dialog" aria-labelledby="backup-close-title">
+      <h2 id="backup-close-title">Backup still running</h2>
+      <p>Your changes are saved locally. Wait for the backup to finish, or quit now and retry it when Scentkeep next opens.</p>
+      <div class="dialog-actions">
+        <button class="back-button" type="button" onclick={() => closeBackupDialogOpen = false}>Wait for backup</button>
+        <button class="primary-button" type="button" onclick={closeWithPendingBackup}>Quit and retry later</button>
       </div>
     </dialog>
   </div>

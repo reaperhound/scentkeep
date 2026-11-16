@@ -4,6 +4,8 @@ use url::Url;
 use scraper::{Html, Selector};
 use std::time::Duration;
 #[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "linux")]
 use webkit2gtk::WebViewExt;
 #[cfg(target_os = "linux")]
 use javascriptcore::ValueExt;
@@ -12,6 +14,8 @@ const LOGIN_WINDOW: &str = "parfumo-login";
 const KEYRING_SERVICE: &str = "com.scentkeep.app.parfumo";
 const KEYRING_USER: &str = "session";
 const PARFUMO_URL: &str = "https://www.parfumo.com/";
+#[cfg(target_os = "linux")]
+static NOTE_SEARCH_ID: AtomicU64 = AtomicU64::new(0);
 #[cfg(not(target_os = "linux"))]
 const NOTE_SEARCH_URL: &str = "https://www.parfumo.com/action/livesearch/livesearch_note.php";
 
@@ -135,6 +139,20 @@ pub(crate) async fn search_parfumo_notes(app: tauri::AppHandle, query: String) -
 }
 
 #[cfg(target_os = "linux")]
+fn evaluate_note_script(window: &tauri::WebviewWindow, script: &str) -> Result<String, String> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let script = script.to_owned();
+    window.with_webview(move |webview| {
+        webview.inner().evaluate_javascript(&script, None, None, None::<&webkit2gtk::gio::Cancellable>, move |result| {
+            let response = result.map(|value| value.to_str().to_string()).map_err(|error| error.to_string());
+            let _ = sender.send(response);
+        });
+    }).map_err(|error| format!("Could not search in Parfumo browser: {error}"))?;
+    receiver.recv_timeout(Duration::from_secs(2))
+        .map_err(|_| "Parfumo browser did not respond to the search.".to_string())?
+}
+
+#[cfg(target_os = "linux")]
 async fn search_notes_in_webview(app: tauri::AppHandle, query: String) -> Result<Vec<ParfumoNote>, String> {
     use tauri::webview::PageLoadEvent;
     let mut ready = None;
@@ -165,31 +183,48 @@ async fn search_notes_in_webview(app: tauri::AppHandle, query: String) -> Result
         return Err("Open Parfumo in Settings and return to its website before searching notes.".into());
     }
     let query_js = serde_json::to_string(&query).map_err(|e| e.to_string())?;
+    let search_id = NOTE_SEARCH_ID.fetch_add(1, Ordering::Relaxed);
     let script = format!(r#"(() => {{
-        try {{
-            const request = new XMLHttpRequest();
-            request.open('POST', '/action/livesearch/livesearch_note.php', false);
-            request.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
-            request.send(new URLSearchParams({{ q: {query_js}, csrf_key: '' }}).toString());
-            return JSON.stringify({{ status: request.status, body: request.responseText }});
-        }} catch (error) {{ return JSON.stringify({{ error: String(error) }}); }}
+        const responses = window.__scentkeepNoteSearchResponses ??= new Map();
+        const searchId = {search_id};
+        (async () => {{
+          try {{
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 12000);
+            try {{
+                const response = await fetch('/action/livesearch/livesearch_note.php', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }},
+                    body: new URLSearchParams({{ q: {query_js}, csrf_key: '' }}),
+                    credentials: 'same-origin',
+                    signal: controller.signal
+                }});
+                responses.set(searchId, JSON.stringify({{ status: response.status, body: await response.text() }}));
+            }} finally {{ clearTimeout(timeout); }}
+          }} catch (error) {{ responses.set(searchId, JSON.stringify({{ error: String(error) }})); }}
+          finally {{ setTimeout(() => responses.delete(searchId), 30000); }}
+        }})();
+        return 'started';
     }})()"#);
-    let (sender, receiver) = std::sync::mpsc::channel();
-    window.with_webview(move |webview| {
-        webview.inner().evaluate_javascript(&script, None, None, None::<&webkit2gtk::gio::Cancellable>, move |result| {
-            let response = result.map(|value| value.to_str().to_string()).map_err(|e| e.to_string());
-            let _ = sender.send(response);
-        });
-    }).map_err(|e| format!("Could not search in Parfumo browser: {e}"))?;
-    let response = tauri::async_runtime::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(15)))
-        .await.map_err(|e| e.to_string())?
-        .map_err(|_| "Parfumo search timed out. Try again.".to_string())??;
+    let response = tauri::async_runtime::spawn_blocking(move || {
+        evaluate_note_script(&window, &script)?;
+        let poll_script = format!("(() => {{ const responses = window.__scentkeepNoteSearchResponses; const result = responses?.get({search_id}); if (result) responses.delete({search_id}); return result ?? ''; }})()");
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let response = evaluate_note_script(&window, &poll_script)?;
+            if !response.is_empty() { break Ok(response); }
+            if std::time::Instant::now() >= deadline { break Err("Parfumo search timed out. Try again.".to_string()); }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }).await.map_err(|error| error.to_string())??;
     let value: serde_json::Value = serde_json::from_str(&response).map_err(|_| "Parfumo returned an invalid search response".to_string())?;
     if let Some(error) = value.get("error").and_then(|value| value.as_str()) { return Err(format!("Parfumo browser search failed: {error}")); }
     let status = value.get("status").and_then(|value| value.as_u64()).unwrap_or(0);
     if status == 403 {
-        let _ = window.show();
-        let _ = window.set_focus();
+        if let Some(window) = app.get_webview_window(LOGIN_WINDOW) {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
         return Err("Parfumo opened for a browser check. Complete it there, then try the note search again.".into());
     }
     if status != 200 { return Err(format!("Parfumo search returned HTTP {status}.")); }
