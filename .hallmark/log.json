@@ -1,0 +1,29 @@
+[
+ {
+  "mode": "redesign",
+  "depth": "full",
+  "scope": "app",
+  "shape": "app screen",
+  "theme": "atelier",
+  "axes": "light/roman-serif/cool",
+  "hero": "none: app screen",
+  "nav": "catalog rail",
+  "footer": "none: app screen",
+  "imagery": "user bottle and note URLs",
+  "photos": [],
+  "entry": "collection gallery",
+  "fingerprint": "catalog-rail/ruled-form/note-index",
+  "sections": [
+   "collection",
+   "fragrance form",
+   "detail",
+   "notes",
+   "settings",
+   "dialogs"
+  ],
+  "signature": "fragrance shelf as catalog gallery",
+  "waived": [],
+  "prompt": "Full UI redesign preserving every input component",
+  "date": "2026-11-16"
+ }
+]
