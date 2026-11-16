@@ -10,6 +10,7 @@ export type Fragrance = {
 
 export type NoteImage = { name: string; imageUrl: string; usageCount: number };
 export type CsvImportReport = { imported: number; duplicates: string[] };
+export type ParfumoStatus = { connected: boolean; cookieCount: number };
 
 export const backend = {
   listFragrances: () => invoke<Fragrance[]>('list_fragrances'),
@@ -27,5 +28,9 @@ export const backend = {
   exportFragrancesCsv: (path: string) => invoke<void>('export_fragrances_csv', { path }),
   importFragrancesCsv: (content: string) => invoke<CsvImportReport>('import_fragrances_csv', { content }),
   exportNotesCsv: (path: string) => invoke<void>('export_notes_csv', { path }),
-  importNotesCsv: (content: string) => invoke<CsvImportReport>('import_notes_csv', { content })
+  importNotesCsv: (content: string) => invoke<CsvImportReport>('import_notes_csv', { content }),
+  parfumoStatus: () => invoke<ParfumoStatus>('parfumo_status'),
+  openParfumoLogin: () => invoke<void>('open_parfumo_login'),
+  saveParfumoSession: () => invoke<ParfumoStatus>('save_parfumo_session'),
+  disconnectParfumo: () => invoke<void>('disconnect_parfumo')
 };

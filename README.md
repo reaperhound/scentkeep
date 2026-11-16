@@ -6,6 +6,10 @@ You can import and export fragrances and notes as CSV files. Scentkeep also chec
 
 On first launch, choose a backup folder. Scentkeep immediately writes `scentkeep-fragrances.csv` and `scentkeep-notes.csv` there, then refreshes both files after each change to fragrances or notes, including CSV imports. Open **Settings** to view or change the folder. If you choose **Later**, the app asks again the next time it opens. The two files can be imported into a fresh collection to restore the data.
 
+## Parfumo connection
+
+In **Settings → Parfumo account**, choose **Connect Parfumo** to open Parfumo's site in a separate app window. Sign in there, return to Settings, and choose **Save session**. Scentkeep saves the site's cookies in the operating system's keyring for future import features. The password is entered on Parfumo's site; Scentkeep does not store it or expose cookies to the frontend. **Disconnect** removes the saved session. If Parfumo expires the session, sign in and save it again. Importing data from Parfumo is not yet implemented.
+
 ## Install
 
 Download the latest version from [GitHub Releases](https://github.com/reaperhound/scentkeep/releases/latest), then choose the file for your system:

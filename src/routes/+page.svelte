@@ -6,7 +6,7 @@
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { check, type Update } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
-  import { backend, type CsvImportReport, type Fragrance, type NoteImage } from '$lib/backend';
+  import { backend, type CsvImportReport, type Fragrance, type NoteImage, type ParfumoStatus } from '$lib/backend';
   import NavIcon from '$lib/NavIcon.svelte';
 
   const blank = (): Fragrance => ({ collection: '', name: '', brand: '', year: new Date().getFullYear(), audience: 'Unisex', concentration: '', description: '', topNotes: [], heartNotes: [], baseNotes: [], perfumer: '', bottleRating: null, ratingCount: null, imageUrl: '', shelf: 'Collection', bottlesOwned: 0, bottlesFinished: 0, favourite: false, priceBought: null, currentPrice: null });
@@ -53,6 +53,9 @@
   let backupFolder = $state<string | null>(null);
   let backupDialogOpen = $state(false);
   let choosingBackupFolder = $state(false);
+  let parfumoStatus = $state<ParfumoStatus | null>(null);
+  let parfumoBusy = $state(false);
+  let parfumoLoginOpen = $state(false);
   let availableUpdate = $state<Update | null>(null);
   let updateMessage = $state('');
   let checkingUpdate = $state(false);
@@ -84,6 +87,8 @@
         backupDialogOpen = !backupFolder;
       } catch (e) { error = `Could not load backup settings: ${String(e)}`; }
       canInstallUpdate = await invoke<boolean>('can_install_update');
+      try { parfumoStatus = await backend.parfumoStatus(); }
+      catch (e) { error = `Could not load Parfumo connection: ${String(e)}`; }
       void checkForUpdates(true);
     }
   });
@@ -283,6 +288,31 @@
   }
   function showShelf(shelf: 'Collection' | 'Wishlist' | 'Empties') { activeShelf = shelf; view = 'library'; error = ''; success = ''; mobileSidebarOpen = false; }
   function showSettings() { view = 'settings'; error = ''; success = ''; mobileSidebarOpen = false; }
+  async function openParfumoLogin() {
+    parfumoBusy = true; error = ''; success = '';
+    try { await backend.openParfumoLogin(); parfumoLoginOpen = true; }
+    catch (e) { error = `Could not open Parfumo: ${String(e)}`; }
+    finally { parfumoBusy = false; }
+  }
+  async function saveParfumoConnection() {
+    parfumoBusy = true; error = ''; success = '';
+    try {
+      parfumoStatus = await backend.saveParfumoSession();
+      parfumoLoginOpen = false;
+      success = 'Parfumo browser session saved in the system keyring.';
+    } catch (e) { error = `Could not save Parfumo session: ${String(e)}`; }
+    finally { parfumoBusy = false; }
+  }
+  async function disconnectParfumo() {
+    parfumoBusy = true; error = ''; success = '';
+    try {
+      await backend.disconnectParfumo();
+      parfumoStatus = { connected: false, cookieCount: 0 };
+      parfumoLoginOpen = false;
+      success = 'Parfumo connection removed.';
+    } catch (e) { error = `Could not disconnect Parfumo: ${String(e)}`; }
+    finally { parfumoBusy = false; }
+  }
   function startNew() {
     fragrance = { ...blank(), shelf: activeShelf };
     mobileSidebarOpen = false;
@@ -462,6 +492,15 @@
           <p class="settings-hint">{#if backupFolder}Files: scentkeep-fragrances.csv and scentkeep-notes.csv{:else}Choose a folder to start automatic backups.{/if}</p>
           <button class="primary-button" type="button" disabled={choosingBackupFolder || !isTauri()} onclick={chooseBackupFolder}>{choosingBackupFolder ? 'Choosing…' : backupFolder ? 'Change folder' : 'Choose folder'}</button>
         </section>
+        <section class="settings-card parfumo-card" aria-labelledby="parfumo-settings-title">
+          <div class="settings-card-header"><div><h2 id="parfumo-settings-title">Parfumo account</h2><p>Sign in on Parfumo and save the browser session for future imports.</p></div><span class:configured={parfumoStatus?.connected} class="backup-status">{parfumoStatus?.connected ? 'Session saved' : 'Not connected'}</span></div>
+          <p class="settings-hint">{#if parfumoLoginOpen}After signing in on Parfumo, return here and save the session.{:else if parfumoStatus?.connected}Your session is saved in the system keyring. Open Parfumo to refresh it, or disconnect to remove it.{:else}Open Parfumo and sign in there to connect your account.{/if}</p>
+          <div class="parfumo-actions">
+            <button class="primary-button" type="button" disabled={parfumoBusy || !isTauri()} onclick={openParfumoLogin}>{parfumoStatus?.connected ? 'Open Parfumo' : 'Connect Parfumo'}</button>
+            {#if parfumoLoginOpen}<button class="parfumo-save-button" type="button" disabled={parfumoBusy} onclick={saveParfumoConnection}>{parfumoStatus?.connected ? 'Update session' : 'Save session'}</button>{/if}
+            {#if parfumoStatus?.connected}<button class="parfumo-disconnect-button" type="button" disabled={parfumoBusy} onclick={disconnectParfumo}>Disconnect</button>{/if}
+          </div>
+        </section>
       </div>
     {:else}
       <div class="page-content collection-page">
@@ -497,6 +536,7 @@
 
 <style>
   .settings-page{max-width:900px}
+  .parfumo-card{margin-top:18px}.parfumo-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.parfumo-actions .primary-button{padding:11px 16px}.parfumo-save-button,.parfumo-disconnect-button{border:1px solid;border-radius:8px;padding:11px 16px;font-size:12px;font-weight:750;background:#fff;transition:background .15s,color .15s,border-color .15s}.parfumo-save-button{border-color:#552044;color:#552044}.parfumo-save-button:hover{background:#f8edf5}.parfumo-disconnect-button{border-color:#d9a9b5;color:#a63450}.parfumo-disconnect-button:hover{background:#fff0f3;border-color:#a63450}.parfumo-actions button:disabled{opacity:.55;cursor:wait}
   .settings-card{border:1px solid #e8e3e8;border-radius:18px;background:#fff;padding:28px;box-shadow:0 8px 28px #2417280a}
   .settings-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:24px}
   .settings-card h2{margin:0 0 7px;font-size:19px;color:#211b25}
