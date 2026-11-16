@@ -1,12 +1,6 @@
-- [x] Profile picture change
-- [x] Collapsable sidebar
-- [x] Clickable breadcrumbs
-- [x] Bottles owned
-- [x] Bottles finished
-- [x] Wishlist
-- [x] Favourite
-- [x] Price bought
-- [x] If wishlist current price
+- [ ] smaller images in view page width=50&aspect_ratio=1:1
+- [ ] notes sql migration for starters
+- [ ] more metadata for notes 
 - [ ] Stats
   - [ ] Algorithm to find notes u have in abundance
 - [x] Completed task

@@ -783,7 +783,7 @@
                     <form class="rename-note-form" onsubmit={(event) => { event.preventDefault(); renameNote(note); }}><input aria-label={`Rename ${note}`} bind:value={editedNoteName} /><button type="submit" disabled={!editedNoteName.trim()}>Save</button><button type="button" onclick={() => editingNote = ''}>Cancel</button></form>
                   {:else}<h2>{note}</h2>{/if}
                   <p>Used in {noteInfo?.usageCount ?? 0} fragrances</p>
-                  {#if noteInfo?.parfumoUrl}<a class="note-source-link" href={noteInfo.parfumoUrl} target="_blank" rel="noreferrer">View on Parfumo</a>{/if}
+                  <div class="note-source-slot">{#if noteInfo?.parfumoUrl}<a class="note-source-link" href={noteInfo.parfumoUrl} target="_blank" rel="noreferrer">View on Parfumo</a>{/if}</div>
                   <form class="note-image-form" onsubmit={(event) => { event.preventDefault(); setNoteImage(note); }}>
                     <input type="url" aria-label={`Image link for ${note}`} placeholder="https://example.com/note.jpg" value={noteImageDrafts[note] ?? ''} oninput={(event) => noteImageDrafts[note] = event.currentTarget.value} />
                     <div><button type="submit" disabled={savingNoteImage === note || !noteImageDrafts[note]?.trim()}>{savingNoteImage === note ? 'Saving…' : noteInfo?.imageUrl ? 'Update image link' : '+ Add image link'}</button>{#if noteInfo?.imageUrl}<button type="button" onclick={() => removeNoteImage(note)}>Remove image</button>{/if}</div>
