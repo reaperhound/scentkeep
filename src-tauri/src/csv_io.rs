@@ -1,7 +1,7 @@
 use super::*;
 use csv::{ReaderBuilder, StringRecord, WriterBuilder};
 
-const FRAGRANCE_HEADERS: [&str; 20] = [
+const FRAGRANCE_HEADERS: [&str; 21] = [
     "collection",
     "name",
     "brand",
@@ -22,6 +22,7 @@ const FRAGRANCE_HEADERS: [&str; 20] = [
     "price_bought",
     "current_price",
     "concentration",
+    "ratings",
 ];
 const NOTE_HEADERS: [&str; 4] = ["name", "image_url", "parfumo_url", "categories"];
 
@@ -70,6 +71,8 @@ struct FragranceRow {
     current_price: Option<f64>,
     #[serde(default)]
     concentration: String,
+    #[serde(default)]
+    ratings: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -108,6 +111,7 @@ impl TryFrom<FragranceRow> for Fragrance {
             base_notes: notes_from_cell(&row.base_notes)?,
             perfumer: row.perfumer,
             bottle_rating: row.bottle_rating,
+            ratings: if row.ratings.is_empty() { Ratings::default() } else { serde_json::from_str(&row.ratings).map_err(|e| e.to_string())? },
             rating_count: row.rating_count,
             image_url: row.image_url,
             shelf: row.shelf,
@@ -163,7 +167,7 @@ pub(super) fn fragrance_csv(conn: &Connection) -> Result<String, String> {
                 base_notes: serde_json::to_string(&fragrance.base_notes)
                     .map_err(|e| e.to_string())?,
                 perfumer: fragrance.perfumer,
-                bottle_rating: fragrance.bottle_rating,
+                bottle_rating: fragrance.ratings.overall().or(fragrance.bottle_rating),
                 rating_count: fragrance.rating_count,
                 image_url: fragrance.image_url,
                 shelf: fragrance.shelf,
@@ -172,6 +176,7 @@ pub(super) fn fragrance_csv(conn: &Connection) -> Result<String, String> {
                 favourite: fragrance.favourite,
                 price_bought: fragrance.price_bought,
                 current_price: fragrance.current_price,
+                ratings: serde_json::to_string(&fragrance.ratings).map_err(|e| e.to_string())?,
             })
             .map_err(|e| e.to_string())?;
     }
@@ -188,6 +193,8 @@ fn parse_fragrances(content: &str) -> Result<Vec<(usize, Fragrance)>, String> {
         validate_headers(&headers, &FRAGRANCE_HEADERS[..13])?;
     } else if headers.len() == 19 {
         validate_headers(&headers, &FRAGRANCE_HEADERS[..19])?;
+    } else if headers.len() == 20 {
+        validate_headers(&headers, &FRAGRANCE_HEADERS[..20])?;
     } else {
         validate_headers(&headers, &FRAGRANCE_HEADERS)?;
     }
@@ -392,15 +399,15 @@ pub(super) fn sync_backup(
             fragrance.brand.trim().to_lowercase(),
         );
         if let Some(id) = fragrance_ids.get(&key) {
-            transaction.execute("UPDATE fragrances SET collection = ?1, name = ?2, brand = ?3, year = ?4, audience = ?5, description = ?6, top_notes = ?7, heart_notes = ?8, base_notes = ?9, perfumer = ?10, bottle_rating = ?11, rating_count = ?12, image_url = ?13, shelf = ?14, bottles_owned = ?15, bottles_finished = ?16, favourite = ?17, price_bought = ?18, current_price = ?19, concentration = ?20 WHERE id = ?21", params![
+            transaction.execute("UPDATE fragrances SET collection = ?1, name = ?2, brand = ?3, year = ?4, audience = ?5, description = ?6, top_notes = ?7, heart_notes = ?8, base_notes = ?9, perfumer = ?10, bottle_rating = ?11, rating_count = ?12, image_url = ?13, shelf = ?14, bottles_owned = ?15, bottles_finished = ?16, favourite = ?17, price_bought = ?18, current_price = ?19, concentration = ?20, ratings = ?22 WHERE id = ?21", params![
                 fragrance.collection.trim(), fragrance.name.trim(), fragrance.brand.trim(), fragrance.year,
                 fragrance.audience, fragrance.description.trim(),
                 serde_json::to_string(&fragrance.top_notes).map_err(|e| e.to_string())?,
                 serde_json::to_string(&fragrance.heart_notes).map_err(|e| e.to_string())?,
                 serde_json::to_string(&fragrance.base_notes).map_err(|e| e.to_string())?,
-                fragrance.perfumer.trim(), fragrance.bottle_rating, fragrance.rating_count, fragrance.image_url.trim(),
+                fragrance.perfumer.trim(), fragrance.ratings.overall().or(fragrance.bottle_rating), fragrance.rating_count, fragrance.image_url.trim(),
                 fragrance.shelf, fragrance.bottles_owned, fragrance.bottles_finished, fragrance.favourite,
-                fragrance.price_bought, fragrance.current_price, fragrance.concentration.trim(), id
+                fragrance.price_bought, fragrance.current_price, fragrance.concentration.trim(), id, serde_json::to_string(&fragrance.ratings).map_err(|e| e.to_string())?
             ]).map_err(|e| e.to_string())?;
             report.fragrances_updated += 1;
         } else {
@@ -475,7 +482,7 @@ mod tests {
         conn.execute_batch("CREATE TABLE fragrances (
             id INTEGER PRIMARY KEY, collection TEXT, name TEXT, brand TEXT, year INTEGER,
             audience TEXT, description TEXT, top_notes TEXT, heart_notes TEXT, base_notes TEXT,
-            perfumer TEXT, bottle_rating REAL, rating_count INTEGER, image_url TEXT,
+            perfumer TEXT, bottle_rating REAL, ratings TEXT NOT NULL DEFAULT '{}', rating_count INTEGER, image_url TEXT,
             shelf TEXT NOT NULL DEFAULT 'Collection', bottles_owned INTEGER NOT NULL DEFAULT 0,
             bottles_finished INTEGER NOT NULL DEFAULT 0, favourite INTEGER NOT NULL DEFAULT 0,
             price_bought REAL, current_price REAL, concentration TEXT NOT NULL DEFAULT ''

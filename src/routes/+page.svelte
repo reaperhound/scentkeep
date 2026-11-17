@@ -13,7 +13,12 @@
   import NavIcon from '$lib/NavIcon.svelte';
   import './redesign.css';
 
-  const blank = (): Fragrance => ({ collection: '', name: '', brand: '', year: new Date().getFullYear(), audience: 'Unisex', concentration: '', description: '', topNotes: [], heartNotes: [], baseNotes: [], perfumer: '', bottleRating: null, ratingCount: null, imageUrl: '', shelf: 'Collection', bottlesOwned: 0, bottlesFinished: 0, favourite: false, priceBought: null, currentPrice: null });
+  const blank = (): Fragrance => ({ collection: '', name: '', brand: '', year: new Date().getFullYear(), audience: 'Unisex', concentration: '', description: '', topNotes: [], heartNotes: [], baseNotes: [], perfumer: '', bottleRating: null, ratings: { scent: null, longevity: null, sillage: null, bottle: null, valueForMoney: null }, ratingCount: null, imageUrl: '', shelf: 'Collection', bottlesOwned: 0, bottlesFinished: 0, favourite: false, priceBought: null, currentPrice: null });
+  const ratingFields = [{ key: 'scent', label: 'Scent' }, { key: 'longevity', label: 'Longevity' }, { key: 'sillage', label: 'Sillage' }, { key: 'bottle', label: 'Bottle' }, { key: 'valueForMoney', label: 'Value for money' }] as const;
+  function overallRating(ratings: Fragrance['ratings']): number | null {
+    const values = ratingFields.map(({ key }) => ratings[key]).filter((value): value is number => value !== null && Number.isFinite(value));
+    return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 10) / 10 : null;
+  }
   let fragrance = $state<Fragrance>(blank());
   let entries = $state<Fragrance[]>([]);
   let step = $state(0);
@@ -605,7 +610,7 @@
     if (item.id !== undefined) void loadFragranceAccords(item.id);
   }
   function startEdit(item: Fragrance) {
-    fragrance = { ...item, topNotes: [...item.topNotes], heartNotes: [...item.heartNotes], baseNotes: [...item.baseNotes] };
+    fragrance = { ...item, ratings: { ...blank().ratings, ...item.ratings }, topNotes: [...item.topNotes], heartNotes: [...item.heartNotes], baseNotes: [...item.baseNotes] };
     noteInputs = { topNotes: '', heartNotes: '', baseNotes: '' };
     activeNoteInput = null;
     duplicateNoteLayer = null;
@@ -628,6 +633,7 @@
     }
     saving = true;
     try {
+      fragrance.bottleRating = overallRating(fragrance.ratings) ?? fragrance.bottleRating;
       if (fragrance.id === undefined) await backend.saveFragrance(fragrance);
       else await backend.updateFragrance(fragrance);
       await refreshNotesAndFragrances();
@@ -767,7 +773,12 @@
           {:else}
             <div class="card-heading"><div><h2>Finishing touches</h2><p>Add context and a little more character.</p></div></div>
             <label class="field"><span class="field-label-row"><span class="field-label-text">Description</span><span class="field-hint">Optional</span></span><textarea rows="5" placeholder="What makes this fragrance special?" bind:value={fragrance.description}></textarea></label>
-            <div class="form-grid details"><label class="field"><span class="field-label-row"><span class="field-label-text">Bottle rating</span><span class="field-hint">0 to 10</span></span><input type="number" min="0" max="10" step="0.1" placeholder="e.g. 7.6" bind:value={fragrance.bottleRating} /></label><label class="field"><span class="field-label-row"><span class="field-label-text">Number of ratings</span><span class="field-hint">Optional</span></span><input type="number" min="0" placeholder="e.g. 5" bind:value={fragrance.ratingCount} /></label></div>
+            <div class="form-grid details">
+              {#each ratingFields as { key, label }}
+                <label class="field"><span class="field-label-row"><span class="field-label-text">{label}</span><span class="field-hint">0 to 10</span></span><input type="number" min="0" max="10" step="0.1" bind:value={fragrance.ratings[key]} /></label>
+              {/each}
+            </div>
+            <div class="detail-rating"><strong>Overall rating: {overallRating(fragrance.ratings)?.toFixed(1) ?? 'Not rated yet'}</strong></div>
             <div class="form-grid details"><label class="field"><span class="field-label-row"><span class="field-label-text">Bottles owned</span></span><input type="number" min="0" step="1" bind:value={fragrance.bottlesOwned} /></label><label class="field"><span class="field-label-row"><span class="field-label-text">Bottles finished</span></span><input type="number" min="0" step="1" bind:value={fragrance.bottlesFinished} /></label><label class="field"><span class="field-label-row"><span class="field-label-text">Price bought</span><span class="field-hint">Optional</span></span><input type="number" min="0" step="0.01" bind:value={fragrance.priceBought} /></label>{#if fragrance.shelf === 'Wishlist'}<label class="field"><span class="field-label-row"><span class="field-label-text">Current price</span><span class="field-hint">Optional</span></span><input type="number" min="0" step="0.01" bind:value={fragrance.currentPrice} /></label>{/if}</div><label class="favourite-field"><input type="checkbox" bind:checked={fragrance.favourite} /> Favourite</label><label class="field"><span class="field-label-row"><span class="field-label-text">Image URL</span><span class="field-hint">Optional</span></span><input type="url" placeholder="https://example.com/fragrance.jpg" bind:value={fragrance.imageUrl} /><small>A link to the bottle image. Leave blank to use a placeholder.</small></label>
             <div class="summary"><div><strong>Ready for your collection</strong><p>{fragrance.name || 'Your fragrance'} by {fragrance.brand || 'your chosen house'}, {fragrance.year}, {fragrance.audience}</p></div></div>
           {/if}
@@ -787,7 +798,7 @@
                 <div class="pyramid-row"><div class="pyramid-label">{group.title}</div><div class="pyramid-notes">{#each group.notes as note}{@const noteImage = imageFor(note)}<div class="pyramid-note"><div class="pyramid-note-image">{#if noteImage}<img src={parfumoThumbnail(noteImage, 50)} alt="" />{:else}<NavIcon name="notes" size={18} />{/if}</div><span>{note}</span></div>{/each}{#if group.notes.length === 0}<span class="no-notes">No notes recorded</span>{/if}</div></div>
               {/each}
             </section>
-            <div class="detail-meta"><section><div class="detail-section-title"><h2>Perfumer</h2></div><p>{selectedFragrance.perfumer || 'Not recorded'}</p></section><section><div class="detail-section-title"><h2>Bottle rating</h2></div>{#if selectedFragrance.bottleRating !== null}<div class="detail-rating"><strong>{selectedFragrance.bottleRating.toFixed(1)}</strong><span>/ 10</span></div><div class="rating-bar"><div style={`width: ${selectedFragrance.bottleRating * 10}%`}></div></div>{#if selectedFragrance.ratingCount !== null}<small>{selectedFragrance.ratingCount} {selectedFragrance.ratingCount === 1 ? 'rating' : 'ratings'}</small>{/if}{:else}<p>Not rated yet</p>{/if}</section></div>
+            <div class="detail-meta"><section><div class="detail-section-title"><h2>Perfumer</h2></div><p>{selectedFragrance.perfumer || 'Not recorded'}</p></section><section><div class="detail-section-title"><h2>Overall rating</h2></div>{#if selectedFragrance.bottleRating !== null}<div class="detail-rating"><strong>{selectedFragrance.bottleRating.toFixed(1)}</strong><span>/ 10</span></div><div class="rating-bar"><div style={`width: ${selectedFragrance.bottleRating * 10}%`}></div></div>{#if selectedFragrance.ratings && ratingFields.some(({ key }) => selectedFragrance.ratings[key] !== null)}<div class="rating-breakdown">{#each ratingFields as { key, label }}{#if selectedFragrance.ratings[key] !== null}<small>{label}: {selectedFragrance.ratings[key]?.toFixed(1)} / 10</small>{/if}{/each}</div>{/if}{:else}<p>Not rated yet</p>{/if}</section></div>
           </div>
         </div>
       </div>
