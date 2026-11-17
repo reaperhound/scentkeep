@@ -1,20 +1,18 @@
 {
-  "scanned": "2026-11-16",
+  "scanned": "2026-11-17",
   "findings": {
-    "fonts": "System and Georgia in src/routes/+page.svelte before redesign",
-    "palette": "Blue and plum literals in the existing component stylesheet",
-    "motion": "CSS transitions only",
-    "spacing": "Mixed pixel values in the existing component stylesheet",
+    "fonts": "Sentient 300/400 and Hanken Grotesk 400 loaded in src/app.html and named in src/routes/tokens.css",
+    "palette": "Atelier OKLCH paper, ink and cool slate tokens in src/routes/tokens.css",
+    "motion": "CSS duration and easing tokens with a reduced-motion fallback",
+    "spacing": "Shared 2px to 144px token scale in src/routes/tokens.css",
     "framework": "SvelteKit 2, Svelte 5, Tauri 2; one application route"
   },
   "preserve": [
-    "Scentkeep name and existing assets",
-    "all screens, fields, handlers and data flow"
+    "Atelier theme, Scentkeep name and existing assets",
+    "Rust-calculated accord values, every screen, field, handler and data flow"
   ],
   "introduce": [
-    "Atelier theme tokens",
-    "catalog composition",
-    "responsive form and detail layouts",
-    "consistent focus and reduced-motion states"
+    "Refined ranked scent-strip accord component",
+    "Dedicated loading, empty, error and full-state preview"
   ]
 }

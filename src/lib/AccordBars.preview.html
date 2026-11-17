@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Loading, empty, error and full states for Scentkeep’s main accords display." />
+    <title>Main accords component states</title>
+    <link rel="stylesheet" href="../routes/tokens.css" />
+    <link rel="stylesheet" href="../routes/base.css" />
+    <link rel="stylesheet" href="./accord-bars.css" />
+  </head>
+  <body>
+    <main class="accord-preview">
+      <h1>Main accords states</h1>
+
+      <section class="accord-preview-state">
+        <h2>Full</h2>
+        <section class="detail-section accord-section" aria-labelledby="preview-full-title">
+          <header class="accord-heading"><h2 id="preview-full-title">Main accords</h2><p>Relative strength estimated from the categories assigned to each note.</p></header>
+          <ol class="accord-list">
+            <li class="accord-row"><div class="accord-meter"><span class="accord-fill" style="--accord-value: 100%"></span><span class="accord-name">Woody</span></div><output>100%</output></li>
+            <li class="accord-row"><div class="accord-meter"><span class="accord-fill" style="--accord-value: 93%"></span><span class="accord-name">Smoky</span></div><output>93%</output></li>
+            <li class="accord-row"><div class="accord-meter"><span class="accord-fill" style="--accord-value: 88%"></span><span class="accord-name">Oriental</span></div><output>88%</output></li>
+            <li class="accord-row"><div class="accord-meter"><span class="accord-fill" style="--accord-value: 72%"></span><span class="accord-name">Leathery</span></div><output>72%</output></li>
+            <li class="accord-row"><div class="accord-meter"><span class="accord-fill" style="--accord-value: 51%"></span><span class="accord-name">Spicy</span></div><output>51%</output></li>
+          </ol>
+        </section>
+      </section>
+
+      <section class="accord-preview-state">
+        <h2>Loading</h2>
+        <section class="detail-section accord-section"><header class="accord-heading"><h2>Main accords</h2><p>Relative strength estimated from the categories assigned to each note.</p></header><div class="accord-state" role="status"><span>Calculating accords…</span><div class="accord-skeleton" aria-hidden="true"><i></i><i></i><i></i></div></div></section>
+      </section>
+
+      <section class="accord-preview-state">
+        <h2>Empty</h2>
+        <section class="detail-section accord-section"><header class="accord-heading"><h2>Main accords</h2><p>Relative strength estimated from the categories assigned to each note.</p></header><p class="accord-state">Add categories to this fragrance’s notes to generate its accord profile.</p></section>
+      </section>
+
+      <section class="accord-preview-state">
+        <h2>Error</h2>
+        <section class="detail-section accord-section"><header class="accord-heading"><h2>Main accords</h2><p>Relative strength estimated from the categories assigned to each note.</p></header><p class="accord-state accord-state-error" role="alert">Could not calculate accords: Fragrance not found.</p></section>
+      </section>
+    </main>
+  </body>
+</html>

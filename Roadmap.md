@@ -1,6 +1,6 @@
-- [ ] smaller images in view page width=50&aspect_ratio=1:1
-- [ ] notes sql migration for starters
-- [ ] more metadata for notes 
+- [x] smaller images in view page width=50&aspect_ratio=1:1
+- [x] notes sql migration for starters
+- [x] more metadata for notes 
 - [ ] Stats
-  - [ ] Algorithm to find notes u have in abundance
+  - [x] Algorithm to find notes u have in abundance
 - [x] Completed task
