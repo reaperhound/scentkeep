@@ -23,7 +23,7 @@ const FRAGRANCE_HEADERS: [&str; 20] = [
     "current_price",
     "concentration",
 ];
-const NOTE_HEADERS: [&str; 3] = ["name", "image_url", "parfumo_url"];
+const NOTE_HEADERS: [&str; 4] = ["name", "image_url", "parfumo_url", "categories"];
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +78,8 @@ struct NoteRow {
     image_url: String,
     #[serde(default)]
     parfumo_url: String,
+    #[serde(default)]
+    categories: String,
 }
 
 fn notes_from_cell(value: &str) -> Result<Vec<String>, String> {
@@ -108,7 +110,12 @@ impl TryFrom<FragranceRow> for Fragrance {
             bottle_rating: row.bottle_rating,
             rating_count: row.rating_count,
             image_url: row.image_url,
-            shelf: row.shelf, bottles_owned: row.bottles_owned, bottles_finished: row.bottles_finished, favourite: row.favourite, price_bought: row.price_bought, current_price: row.current_price,
+            shelf: row.shelf,
+            bottles_owned: row.bottles_owned,
+            bottles_finished: row.bottles_finished,
+            favourite: row.favourite,
+            price_bought: row.price_bought,
+            current_price: row.current_price,
         })
     }
 }
@@ -159,7 +166,12 @@ pub(super) fn fragrance_csv(conn: &Connection) -> Result<String, String> {
                 bottle_rating: fragrance.bottle_rating,
                 rating_count: fragrance.rating_count,
                 image_url: fragrance.image_url,
-                shelf: fragrance.shelf, bottles_owned: fragrance.bottles_owned, bottles_finished: fragrance.bottles_finished, favourite: fragrance.favourite, price_bought: fragrance.price_bought, current_price: fragrance.current_price,
+                shelf: fragrance.shelf,
+                bottles_owned: fragrance.bottles_owned,
+                bottles_finished: fragrance.bottles_finished,
+                favourite: fragrance.favourite,
+                price_bought: fragrance.price_bought,
+                current_price: fragrance.current_price,
             })
             .map_err(|e| e.to_string())?;
     }
@@ -172,9 +184,13 @@ fn parse_fragrances(content: &str) -> Result<Vec<(usize, Fragrance)>, String> {
         .headers()
         .map_err(|e| format!("Invalid CSV header: {e}"))?
         .clone();
-    if headers.len() == 13 { validate_headers(&headers, &FRAGRANCE_HEADERS[..13])?; }
-    else if headers.len() == 19 { validate_headers(&headers, &FRAGRANCE_HEADERS[..19])?; }
-    else { validate_headers(&headers, &FRAGRANCE_HEADERS)?; }
+    if headers.len() == 13 {
+        validate_headers(&headers, &FRAGRANCE_HEADERS[..13])?;
+    } else if headers.len() == 19 {
+        validate_headers(&headers, &FRAGRANCE_HEADERS[..19])?;
+    } else {
+        validate_headers(&headers, &FRAGRANCE_HEADERS)?;
+    }
     let mut incoming = Vec::new();
     for (index, row) in reader.deserialize::<FragranceRow>().enumerate() {
         let row = row.map_err(|e| format!("CSV row {} is invalid: {e}", index + 2))?;
@@ -243,6 +259,7 @@ pub(super) fn note_csv(conn: &Connection) -> Result<String, String> {
                 name: note.name,
                 image_url: note.image_url,
                 parfumo_url: note.parfumo_url,
+                categories: serde_json::to_string(&note.categories).map_err(|e| e.to_string())?,
             })
             .map_err(|e| e.to_string())?;
     }
@@ -255,7 +272,12 @@ fn parse_notes(content: &str) -> Result<Vec<(usize, NoteRow)>, String> {
         .headers()
         .map_err(|e| format!("Invalid CSV header: {e}"))?
         .clone();
-    if !(headers.len() == 2 && headers.iter().collect::<HashSet<_>>() == ["name", "image_url"].into_iter().collect()) {
+    let legacy = (headers.len() == 2
+        && headers.iter().collect::<HashSet<_>>() == ["name", "image_url"].into_iter().collect())
+        || (headers.len() == 3
+            && headers.iter().collect::<HashSet<_>>()
+                == ["name", "image_url", "parfumo_url"].into_iter().collect());
+    if !legacy {
         validate_headers(&headers, &NOTE_HEADERS)?;
     }
     let mut incoming = Vec::new();
@@ -268,8 +290,17 @@ fn parse_notes(content: &str) -> Result<Vec<(usize, NoteRow)>, String> {
             validate_image_url(&row.image_url)
                 .map_err(|e| format!("CSV row {}: {e}", index + 2))?;
         }
-        if !row.parfumo_url.trim().is_empty() && parfumo::parfumo_link(&row.parfumo_url).is_empty() {
+        if !row.parfumo_url.trim().is_empty() && parfumo::parfumo_link(&row.parfumo_url).is_empty()
+        {
             return Err(format!("CSV row {}: Enter a valid Parfumo link", index + 2));
+        }
+        if !row.categories.trim().is_empty()
+            && serde_json::from_str::<Vec<String>>(&row.categories).is_err()
+        {
+            return Err(format!(
+                "CSV row {}: Categories must be a JSON array",
+                index + 2
+            ));
         }
         incoming.push((index + 2, row));
     }
@@ -306,8 +337,8 @@ fn import_notes(conn: &mut Connection, content: &str) -> Result<ImportReport, St
         }
         transaction
             .execute(
-                "INSERT INTO note_images (name, image_data_url, parfumo_url) VALUES (?1, ?2, ?3)",
-                params![note.name.trim(), note.image_url.trim(), note.parfumo_url.trim()],
+                "INSERT INTO note_images (name, image_data_url, parfumo_url, categories) VALUES (?1, ?2, ?3, ?4)",
+                params![note.name.trim(), note.image_url.trim(), note.parfumo_url.trim(), if note.categories.trim().is_empty() { "[]" } else { note.categories.trim() }],
             )
             .map_err(|e| e.to_string())?;
         report.imported += 1;
@@ -316,25 +347,50 @@ fn import_notes(conn: &mut Connection, content: &str) -> Result<ImportReport, St
     Ok(report)
 }
 
-pub(super) fn sync_backup(conn: &mut Connection, fragrances_csv: &str, notes_csv: &str) -> Result<SyncReport, String> {
+pub(super) fn sync_backup(
+    conn: &mut Connection,
+    fragrances_csv: &str,
+    notes_csv: &str,
+) -> Result<SyncReport, String> {
     // Validate both files before changing either table.
     let fragrances = parse_fragrances(fragrances_csv)?;
     let notes = parse_notes(notes_csv)?;
-    let transaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    let transaction = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
     let mut fragrance_ids = HashMap::new();
     for saved in load_fragrances(&transaction)? {
-        fragrance_ids.insert((saved.name.trim().to_lowercase(), saved.brand.trim().to_lowercase()), saved.id.unwrap());
+        fragrance_ids.insert(
+            (
+                saved.name.trim().to_lowercase(),
+                saved.brand.trim().to_lowercase(),
+            ),
+            saved.id.unwrap(),
+        );
     }
     let mut note_names = HashSet::new();
     {
-        let mut statement = transaction.prepare("SELECT name FROM note_images").map_err(|e| e.to_string())?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
-        for row in rows { note_names.insert(row.map_err(|e| e.to_string())?.trim().to_lowercase()); }
+        let mut statement = transaction
+            .prepare("SELECT name FROM note_images")
+            .map_err(|e| e.to_string())?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            note_names.insert(row.map_err(|e| e.to_string())?.trim().to_lowercase());
+        }
     }
-    let mut report = SyncReport { fragrances_added: 0, fragrances_updated: 0, notes_added: 0, notes_updated: 0 };
+    let mut report = SyncReport {
+        fragrances_added: 0,
+        fragrances_updated: 0,
+        notes_added: 0,
+        notes_updated: 0,
+    };
     for (_, fragrance) in fragrances {
-        let key = (fragrance.name.trim().to_lowercase(), fragrance.brand.trim().to_lowercase());
+        let key = (
+            fragrance.name.trim().to_lowercase(),
+            fragrance.brand.trim().to_lowercase(),
+        );
         if let Some(id) = fragrance_ids.get(&key) {
             transaction.execute("UPDATE fragrances SET collection = ?1, name = ?2, brand = ?3, year = ?4, audience = ?5, description = ?6, top_notes = ?7, heart_notes = ?8, base_notes = ?9, perfumer = ?10, bottle_rating = ?11, rating_count = ?12, image_url = ?13, shelf = ?14, bottles_owned = ?15, bottles_finished = ?16, favourite = ?17, price_bought = ?18, current_price = ?19, concentration = ?20 WHERE id = ?21", params![
                 fragrance.collection.trim(), fragrance.name.trim(), fragrance.brand.trim(), fragrance.year,
@@ -355,12 +411,12 @@ pub(super) fn sync_backup(conn: &mut Connection, fragrances_csv: &str, notes_csv
     }
     for (_, note) in notes {
         if note_names.insert(note.name.trim().to_lowercase()) {
-            transaction.execute("INSERT INTO note_images (name, image_data_url, parfumo_url) VALUES (?1, ?2, ?3)",
-                params![note.name.trim(), note.image_url.trim(), note.parfumo_url.trim()]).map_err(|e| e.to_string())?;
+            transaction.execute("INSERT INTO note_images (name, image_data_url, parfumo_url, categories) VALUES (?1, ?2, ?3, ?4)",
+                params![note.name.trim(), note.image_url.trim(), note.parfumo_url.trim(), if note.categories.trim().is_empty() { "[]" } else { note.categories.trim() }]).map_err(|e| e.to_string())?;
             report.notes_added += 1;
         } else {
-            transaction.execute("UPDATE note_images SET image_data_url = ?2, parfumo_url = ?3 WHERE name = ?1 COLLATE NOCASE",
-                params![note.name.trim(), note.image_url.trim(), note.parfumo_url.trim()]).map_err(|e| e.to_string())?;
+            transaction.execute("UPDATE note_images SET image_data_url = ?2, parfumo_url = ?3, categories = ?4 WHERE name = ?1 COLLATE NOCASE",
+                params![note.name.trim(), note.image_url.trim(), note.parfumo_url.trim(), if note.categories.trim().is_empty() { "[]" } else { note.categories.trim() }]).map_err(|e| e.to_string())?;
             report.notes_updated += 1;
         }
     }
@@ -383,7 +439,9 @@ pub(super) fn import_fragrances_csv(
     content: String,
 ) -> Result<ImportReport, String> {
     let report = import_fragrances(&mut database(&app)?, &content)?;
-    if report.imported > 0 { backup::after_change(&app)?; }
+    if report.imported > 0 {
+        backup::after_change(&app)?;
+    }
     Ok(report)
 }
 
@@ -402,7 +460,9 @@ pub(super) fn import_notes_csv(
     content: String,
 ) -> Result<ImportReport, String> {
     let report = import_notes(&mut database(&app)?, &content)?;
-    if report.imported > 0 { backup::after_change(&app)?; }
+    if report.imported > 0 {
+        backup::after_change(&app)?;
+    }
     Ok(report)
 }
 
@@ -419,7 +479,7 @@ mod tests {
             shelf TEXT NOT NULL DEFAULT 'Collection', bottles_owned INTEGER NOT NULL DEFAULT 0,
             bottles_finished INTEGER NOT NULL DEFAULT 0, favourite INTEGER NOT NULL DEFAULT 0,
             price_bought REAL, current_price REAL, concentration TEXT NOT NULL DEFAULT ''
-        ); CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL, parfumo_url TEXT NOT NULL DEFAULT '');").unwrap();
+        ); CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL, parfumo_url TEXT NOT NULL DEFAULT '', categories TEXT NOT NULL DEFAULT '[]');").unwrap();
         conn
     }
 
@@ -492,17 +552,43 @@ mod tests {
             "Fresh,Rose,Maison,2024,Unisex,Original,[],[],[],,,,,Collection,0,0,false,,\n"
         );
         import_fragrances(&mut source, first).unwrap();
-        import_notes(&mut source, "name,image_url\nRose,https://example.com/old.png\n").unwrap();
+        import_notes(
+            &mut source,
+            "name,image_url\nRose,https://example.com/old.png\n",
+        )
+        .unwrap();
         let mut target = test_db();
-        sync_backup(&mut target, &fragrance_csv(&source).unwrap(), &note_csv(&source).unwrap()).unwrap();
-        source.execute("UPDATE fragrances SET description = 'Updated' WHERE name = 'Rose'", []).unwrap();
+        sync_backup(
+            &mut target,
+            &fragrance_csv(&source).unwrap(),
+            &note_csv(&source).unwrap(),
+        )
+        .unwrap();
+        source
+            .execute(
+                "UPDATE fragrances SET description = 'Updated' WHERE name = 'Rose'",
+                [],
+            )
+            .unwrap();
         source.execute("UPDATE note_images SET image_data_url = 'https://example.com/new.png' WHERE name = 'Rose'", []).unwrap();
-        let report = sync_backup(&mut target, &fragrance_csv(&source).unwrap(), &note_csv(&source).unwrap()).unwrap();
+        let report = sync_backup(
+            &mut target,
+            &fragrance_csv(&source).unwrap(),
+            &note_csv(&source).unwrap(),
+        )
+        .unwrap();
         assert_eq!(report.fragrances_updated, 1);
         assert_eq!(report.notes_updated, 1);
         assert_eq!(load_fragrances(&target).unwrap()[0].description, "Updated");
         assert!(note_csv(&target).unwrap().contains("new.png"));
-        assert!(sync_backup(&mut target, &fragrance_csv(&source).unwrap(), "name,image_url\nRose,not-a-url\n").is_err());
+        assert!(
+            sync_backup(
+                &mut target,
+                &fragrance_csv(&source).unwrap(),
+                "name,image_url\nRose,not-a-url\n"
+            )
+            .is_err()
+        );
         assert_eq!(load_fragrances(&target).unwrap()[0].description, "Updated");
     }
 }

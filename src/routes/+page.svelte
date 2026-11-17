@@ -45,6 +45,9 @@
   let editedNoteName = $state('');
   let savingNoteImage = $state('');
   let noteImageDrafts = $state<Record<string, string>>({});
+  let editingNoteCategories = $state('');
+  let noteCategoryDraft = $state('');
+  let refreshingNoteMetadata = $state(false);
   let error = $state('');
   let success = $state('');
   let saving = $state(false);
@@ -176,6 +179,11 @@
       canInstallUpdate = await invoke<boolean>('can_install_update');
       try { parfumoStatus = await backend.parfumoStatus(); }
       catch (e) { error = `Could not load Parfumo connection: ${String(e)}`; }
+      if (parfumoStatus?.connected) {
+        try {
+          if (await backend.refreshParfumoNoteMetadata()) noteImages = await backend.listNoteImages();
+        } catch { /* Metadata can be retried the next time Parfumo is connected. */ }
+      }
       void checkForUpdates(true);
     }
   });
@@ -426,6 +434,26 @@
       noteImages = await backend.listNoteImages();
       success = `Image removed from ${note}.`;
     } catch (e) { error = String(e); }
+  }
+  async function saveNoteCategories(note: string) {
+    error = ''; success = '';
+    try {
+      const categories = noteCategoryDraft.split(',').map((category) => category.trim()).filter(Boolean);
+      await backend.setNoteCategories(note, categories);
+      noteImages = await backend.listNoteImages();
+      editingNoteCategories = '';
+      success = `Categories saved for ${note}.`;
+    } catch (e) { error = String(e); }
+  }
+  async function refreshNoteMetadata() {
+    if (refreshingNoteMetadata) return;
+    error = ''; success = ''; refreshingNoteMetadata = true;
+    try {
+      const updated = await backend.refreshParfumoNoteMetadata();
+      noteImages = await backend.listNoteImages();
+      success = updated ? `Filled metadata for ${updated} ${updated === 1 ? 'note' : 'notes'}.` : 'No additional Parfumo metadata was found.';
+    } catch (e) { error = String(e); }
+    finally { refreshingNoteMetadata = false; }
   }
   function suggestionsFor(kind: NoteLayer) {
     const query = noteInputs[kind].trim().toLocaleLowerCase();
@@ -769,7 +797,7 @@
           {/if}
         </div>
         {#if !parfumoStatus?.connected}<p class="note-source-tip">Connect Parfumo in Settings to search its notes. You can still add a note by name.</p>{/if}
-        <div class="library-toolbar"><div class="search-box">⌕ <input aria-label="Search notes" placeholder="Search perfume notes..." bind:value={noteSearch} /></div><span>{visibleNotes.length} {visibleNotes.length === 1 ? 'note' : 'notes'}</span></div>
+        <div class="library-toolbar"><div class="search-box">⌕ <input aria-label="Search notes" placeholder="Search perfume notes..." bind:value={noteSearch} /></div><div class="note-toolbar-actions">{#if parfumoStatus?.connected}<button type="button" disabled={refreshingNoteMetadata} onclick={refreshNoteMetadata}>{refreshingNoteMetadata ? 'Filling metadata…' : 'Fill missing metadata'}</button>{/if}<span>{visibleNotes.length} {visibleNotes.length === 1 ? 'note' : 'notes'}</span></div></div>
         {#if visibleNotes.length === 0}
           <div class="empty-state"><div><NavIcon name="notes" size={48} /></div><h2>{allNotes.length === 0 ? 'No notes in your collection yet' : 'No notes found'}</h2><p>{allNotes.length === 0 ? 'Add a note above, or add notes to a fragrance.' : 'Try another search term.'}</p>{#if allNotes.length === 0}<button class="primary-button" onclick={startNew}>Add a fragrance</button>{/if}</div>
         {:else}
@@ -783,6 +811,12 @@
                     <form class="rename-note-form" onsubmit={(event) => { event.preventDefault(); renameNote(note); }}><input aria-label={`Rename ${note}`} bind:value={editedNoteName} /><button type="submit" disabled={!editedNoteName.trim()}>Save</button><button type="button" onclick={() => editingNote = ''}>Cancel</button></form>
                   {:else}<h2>{note}</h2>{/if}
                   <p>Used in {noteInfo?.usageCount ?? 0} fragrances</p>
+                  {#if editingNoteCategories === note}
+                    <form class="note-category-form" onsubmit={(event) => { event.preventDefault(); saveNoteCategories(note); }}><label for={`categories-${note}`}>Categories, separated by commas</label><input id={`categories-${note}`} bind:value={noteCategoryDraft} placeholder="Fruits, Green notes" /><div><button type="submit">Save categories</button><button type="button" onclick={() => editingNoteCategories = ''}>Cancel</button></div></form>
+                  {:else}
+                    {#if noteInfo?.categories.length}<div class="note-categories">{#each noteInfo.categories as category}<span>{category}</span>{/each}</div>{/if}
+                    <button class="edit-categories-button" type="button" onclick={() => { editingNoteCategories = note; noteCategoryDraft = noteInfo?.categories.join(', ') ?? ''; }}>Edit categories</button>
+                  {/if}
                   <div class="note-source-slot">{#if noteInfo?.parfumoUrl}<a class="note-source-link" href={noteInfo.parfumoUrl} target="_blank" rel="noreferrer">View on Parfumo</a>{/if}</div>
                   <form class="note-image-form" onsubmit={(event) => { event.preventDefault(); setNoteImage(note); }}>
                     <input type="url" aria-label={`Image link for ${note}`} placeholder="https://example.com/note.jpg" value={noteImageDrafts[note] ?? ''} oninput={(event) => noteImageDrafts[note] = event.currentTarget.value} />

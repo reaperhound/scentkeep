@@ -1,14 +1,17 @@
-use serde::{Deserialize, Serialize};
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
-use url::Url;
-use scraper::{Html, Selector};
-use std::time::Duration;
-#[cfg(target_os = "linux")]
-use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(target_os = "linux")]
-use webkit2gtk::{CookieAcceptPolicy, CookieManagerExt, SettingsExt, WebViewExt, WebsiteDataManagerExt, WebsiteDataManagerExtManual, WebsiteDataTypes};
 #[cfg(target_os = "linux")]
 use javascriptcore::ValueExt;
+use scraper::{Html, Selector};
+use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use url::Url;
+#[cfg(target_os = "linux")]
+use webkit2gtk::{
+    CookieAcceptPolicy, CookieManagerExt, SettingsExt, WebViewExt, WebsiteDataManagerExt,
+    WebsiteDataManagerExtManual, WebsiteDataTypes,
+};
 
 const LOGIN_WINDOW: &str = "parfumo-login";
 const KEYRING_SERVICE: &str = "com.scentkeep.app.parfumo";
@@ -27,97 +30,200 @@ pub(crate) struct ParfumoNote {
     image_url: String,
     #[serde(default)]
     parfumo_url: String,
+    #[serde(default)]
+    categories: Vec<String>,
 }
 
 pub(crate) fn parfumo_link(value: &str) -> String {
-    if value.trim().is_empty() { return String::new(); }
-    Url::parse(PARFUMO_URL).ok()
+    if value.trim().is_empty() {
+        return String::new();
+    }
+    Url::parse(PARFUMO_URL)
+        .ok()
         .and_then(|base| base.join(value.trim()).ok())
-        .filter(|url| url.scheme() == "https" && matches!(url.host_str(), Some("www.parfumo.com" | "parfumo.com")))
-        .map(|url| url.to_string()).unwrap_or_default()
+        .filter(|url| {
+            url.scheme() == "https"
+                && matches!(url.host_str(), Some("www.parfumo.com" | "parfumo.com"))
+        })
+        .map(|url| url.to_string())
+        .unwrap_or_default()
 }
 
 fn image_link(value: &str) -> String {
-    if value.trim().is_empty() { return String::new(); }
-    Url::parse(PARFUMO_URL).ok()
+    if value.trim().is_empty() {
+        return String::new();
+    }
+    Url::parse(PARFUMO_URL)
+        .ok()
         .and_then(|base| base.join(value.trim()).ok())
         .filter(|url| matches!(url.scheme(), "https" | "http") && url.host_str().is_some())
         .map(|mut url| {
-            if url.host_str() == Some("media.parfumo.com") && url.path().starts_with("/notes_png/") {
-                let retained = url.query_pairs()
+            if url.host_str() == Some("media.parfumo.com") && url.path().starts_with("/notes_png/")
+            {
+                let retained = url
+                    .query_pairs()
                     .filter(|(key, _)| key != "width" && key != "aspect_ratio")
                     .map(|(key, value)| (key.into_owned(), value.into_owned()))
                     .collect::<Vec<_>>();
                 url.set_query(None);
                 if !retained.is_empty() {
                     let mut query = url.query_pairs_mut();
-                    for (key, value) in retained { query.append_pair(&key, &value); }
+                    for (key, value) in retained {
+                        query.append_pair(&key, &value);
+                    }
                 }
             }
             url.to_string()
-        }).unwrap_or_default()
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn upgrade_note_images(conn: &rusqlite::Connection) -> Result<usize, String> {
     let mut statement = conn.prepare("SELECT name, image_data_url FROM note_images WHERE image_data_url LIKE 'https://media.parfumo.com/notes_png/%?%'")
         .map_err(|e| e.to_string())?;
-    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(|e| e.to_string())?;
     let mut updates = Vec::new();
     for row in rows {
         let (name, old_url) = row.map_err(|e| e.to_string())?;
         let new_url = image_link(&old_url);
-        if new_url != old_url { updates.push((name, new_url)); }
+        if new_url != old_url {
+            updates.push((name, new_url));
+        }
     }
     drop(statement);
     for (name, url) in &updates {
-        conn.execute("UPDATE note_images SET image_data_url = ?2 WHERE name = ?1", rusqlite::params![name, url])
-            .map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE note_images SET image_data_url = ?2 WHERE name = ?1",
+            rusqlite::params![name, url],
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(updates.len())
 }
 
 fn json_note(value: &serde_json::Value) -> Option<ParfumoNote> {
     let object = value.as_object()?;
-    let name = ["name", "note", "title", "label", "text", "value", "note_name"]
-        .iter().find_map(|key| object.get(*key).and_then(|v| v.as_str()))?.trim().to_owned();
-    if name.is_empty() { return None; }
+    let name = [
+        "name",
+        "note",
+        "title",
+        "label",
+        "text",
+        "value",
+        "note_name",
+    ]
+    .iter()
+    .find_map(|key| object.get(*key).and_then(|v| v.as_str()))?
+    .trim()
+    .to_owned();
+    if name.is_empty() {
+        return None;
+    }
     let image_url = ["image", "image_url", "imageUrl", "img", "photo", "src"]
-        .iter().find_map(|key| object.get(*key).and_then(|v| v.as_str())).map(image_link).unwrap_or_default();
+        .iter()
+        .find_map(|key| object.get(*key).and_then(|v| v.as_str()))
+        .map(image_link)
+        .unwrap_or_default();
     let parfumo_url = ["url", "link", "href"]
-        .iter().find_map(|key| object.get(*key).and_then(|v| v.as_str())).map(parfumo_link).unwrap_or_default();
-    Some(ParfumoNote { name, image_url, parfumo_url })
+        .iter()
+        .find_map(|key| object.get(*key).and_then(|v| v.as_str()))
+        .map(parfumo_link)
+        .unwrap_or_default();
+    let categories = object
+        .get("categories")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(ParfumoNote {
+        name,
+        image_url,
+        parfumo_url,
+        categories,
+    })
 }
 
 fn parse_notes(body: &str) -> Vec<ParfumoNote> {
     let mut notes = Vec::new();
     let mut html_body = body.to_owned();
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
-        let items = value.as_array().or_else(|| value.get("results").and_then(|v| v.as_array()))
+        let items = value
+            .as_array()
+            .or_else(|| value.get("results").and_then(|v| v.as_array()))
             .or_else(|| value.get("data").and_then(|v| v.as_array()))
             .or_else(|| value.get("items").and_then(|v| v.as_array()));
         if let Some(items) = items {
             notes.extend(items.iter().filter_map(json_note));
         }
-        if let Some(markup) = value.as_str().or_else(|| value.get("html").and_then(|v| v.as_str())) {
+        if let Some(markup) = value
+            .as_str()
+            .or_else(|| value.get("html").and_then(|v| v.as_str()))
+        {
             html_body = markup.to_owned();
         }
     }
     if notes.is_empty() {
         let html = Html::parse_fragment(&html_body);
-        let link = Selector::parse("[data-name_url], a[href], [data-note-name], [data-name]").expect("valid selector");
+        let link = Selector::parse("[data-name_url], a[href], [data-note-name], [data-name]")
+            .expect("valid selector");
         let image = Selector::parse("img").expect("valid selector");
         for item in html.select(&link) {
             let href = item.value().attr("href").unwrap_or_default();
-            let name = item.text().collect::<Vec<_>>().join(" ").split_whitespace().collect::<Vec<_>>().join(" ");
-            let name = item.value().attr("data-note-name").or_else(|| item.value().attr("data-name"))
-                .map(str::to_owned).unwrap_or_else(|| if name.is_empty() { item.value().attr("title").unwrap_or_default().trim().to_owned() } else { name });
-            if name.is_empty() { continue; }
-            let image_url = item.select(&image).next().and_then(|img| img.value().attr("src").or_else(|| img.value().attr("data-src"))).map(image_link).unwrap_or_default();
-            let parfumo_url = item.value().attr("data-name_url")
+            let name = item
+                .text()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let name = item
+                .value()
+                .attr("data-note-name")
+                .or_else(|| item.value().attr("data-name"))
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    if name.is_empty() {
+                        item.value()
+                            .attr("title")
+                            .unwrap_or_default()
+                            .trim()
+                            .to_owned()
+                    } else {
+                        name
+                    }
+                });
+            if name.is_empty() {
+                continue;
+            }
+            let image_url = item
+                .select(&image)
+                .next()
+                .and_then(|img| {
+                    img.value()
+                        .attr("src")
+                        .or_else(|| img.value().attr("data-src"))
+                })
+                .map(image_link)
+                .unwrap_or_default();
+            let parfumo_url = item
+                .value()
+                .attr("data-name_url")
                 .map(|slug| parfumo_link(&format!("/Fragrance_Note/{slug}")))
                 .unwrap_or_else(|| parfumo_link(href));
-            notes.push(ParfumoNote { name, image_url, parfumo_url });
+            notes.push(ParfumoNote {
+                name,
+                image_url,
+                parfumo_url,
+                categories: Vec::new(),
+            });
         }
     }
     let mut seen = std::collections::HashSet::new();
@@ -127,11 +233,20 @@ fn parse_notes(body: &str) -> Vec<ParfumoNote> {
 }
 
 #[tauri::command]
-pub(crate) async fn search_parfumo_notes(app: tauri::AppHandle, query: String) -> Result<Vec<ParfumoNote>, String> {
+pub(crate) async fn search_parfumo_notes(
+    app: tauri::AppHandle,
+    query: String,
+) -> Result<Vec<ParfumoNote>, String> {
     let query = query.trim().to_owned();
-    if query.chars().count() < 2 { return Ok(Vec::new()); }
-    if query.chars().count() > 100 { return Err("Search term is too long".into()); }
-    if load_session()?.is_none() { return Err("Connect Parfumo in Settings before searching its notes.".into()); }
+    if query.chars().count() < 2 {
+        return Ok(Vec::new());
+    }
+    if query.chars().count() > 100 {
+        return Err("Search term is too long".into());
+    }
+    if load_session()?.is_none() {
+        return Err("Connect Parfumo in Settings before searching its notes.".into());
+    }
     #[cfg(target_os = "linux")]
     return search_notes_in_webview(app, query).await;
     #[cfg(not(target_os = "linux"))]
@@ -141,20 +256,31 @@ pub(crate) async fn search_parfumo_notes(app: tauri::AppHandle, query: String) -
 #[cfg(target_os = "linux")]
 fn configure_parfumo_webview(window: &tauri::WebviewWindow) -> Result<(), String> {
     let (sender, receiver) = std::sync::mpsc::channel();
-    window.with_webview(move |webview| {
-        let result = (|| {
-            let settings = webview.inner().settings().ok_or("Parfumo browser settings are unavailable")?;
-            settings.set_enable_javascript(true);
-            settings.set_enable_html5_local_storage(true);
-            settings.set_enable_html5_database(true);
-            let manager = webview.inner().website_data_manager().ok_or("Parfumo browser storage is unavailable")?;
-            let cookies = manager.cookie_manager().ok_or("Parfumo browser cookies are unavailable")?;
-            cookies.set_accept_policy(CookieAcceptPolicy::Always);
-            Ok::<(), &str>(())
-        })();
-        let _ = sender.send(result);
-    }).map_err(|error| format!("Could not configure Parfumo browser: {error}"))?;
-    receiver.recv_timeout(Duration::from_secs(2))
+    window
+        .with_webview(move |webview| {
+            let result = (|| {
+                let settings = webview
+                    .inner()
+                    .settings()
+                    .ok_or("Parfumo browser settings are unavailable")?;
+                settings.set_enable_javascript(true);
+                settings.set_enable_html5_local_storage(true);
+                settings.set_enable_html5_database(true);
+                let manager = webview
+                    .inner()
+                    .website_data_manager()
+                    .ok_or("Parfumo browser storage is unavailable")?;
+                let cookies = manager
+                    .cookie_manager()
+                    .ok_or("Parfumo browser cookies are unavailable")?;
+                cookies.set_accept_policy(CookieAcceptPolicy::Always);
+                Ok::<(), &str>(())
+            })();
+            let _ = sender.send(result);
+        })
+        .map_err(|error| format!("Could not configure Parfumo browser: {error}"))?;
+    receiver
+        .recv_timeout(Duration::from_secs(2))
         .map_err(|_| "Parfumo browser did not apply its settings.".to_string())?
         .map_err(str::to_owned)
 }
@@ -163,50 +289,85 @@ fn configure_parfumo_webview(window: &tauri::WebviewWindow) -> Result<(), String
 fn evaluate_browser_script(window: &tauri::WebviewWindow, script: &str) -> Result<String, String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     let script = script.to_owned();
-    window.with_webview(move |webview| {
-        webview.inner().evaluate_javascript(&script, None, None, None::<&webkit2gtk::gio::Cancellable>, move |result| {
-            let response = result.map(|value| value.to_str().to_string()).map_err(|error| error.to_string());
-            let _ = sender.send(response);
-        });
-    }).map_err(|error| format!("Could not read Parfumo browser: {error}"))?;
-    receiver.recv_timeout(Duration::from_secs(2))
+    window
+        .with_webview(move |webview| {
+            webview.inner().evaluate_javascript(
+                &script,
+                None,
+                None,
+                None::<&webkit2gtk::gio::Cancellable>,
+                move |result| {
+                    let response = result
+                        .map(|value| value.to_str().to_string())
+                        .map_err(|error| error.to_string());
+                    let _ = sender.send(response);
+                },
+            );
+        })
+        .map_err(|error| format!("Could not read Parfumo browser: {error}"))?;
+    receiver
+        .recv_timeout(Duration::from_secs(2))
         .map_err(|_| "Parfumo browser did not respond.".to_string())?
 }
 
 #[cfg(target_os = "linux")]
-async fn search_notes_in_webview(app: tauri::AppHandle, query: String) -> Result<Vec<ParfumoNote>, String> {
+async fn search_notes_in_webview(
+    app: tauri::AppHandle,
+    query: String,
+) -> Result<Vec<ParfumoNote>, String> {
     use tauri::webview::PageLoadEvent;
     let mut ready = None;
     let window = if let Some(window) = app.get_webview_window(LOGIN_WINDOW) {
         window
     } else {
         let (sender, receiver) = std::sync::mpsc::channel();
-        let url = Url::parse("https://www.parfumo.com/Fragrance_Notes").map_err(|e| e.to_string())?;
-        let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("parfumo-webview");
+        let url =
+            Url::parse("https://www.parfumo.com/Fragrance_Notes").map_err(|e| e.to_string())?;
+        let data_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("parfumo-webview");
         let window = WebviewWindowBuilder::new(&app, LOGIN_WINDOW, WebviewUrl::External(url))
             .title("Parfumo notes")
             .inner_size(1100.0, 760.0)
             .visible(false)
             .data_directory(data_dir)
             .on_page_load(move |_, payload| {
-                if payload.event() == PageLoadEvent::Finished { let _ = sender.send(()); }
+                if payload.event() == PageLoadEvent::Finished {
+                    let _ = sender.send(());
+                }
             })
-            .build().map_err(|e| format!("Could not open Parfumo browser: {e}"))?;
+            .build()
+            .map_err(|e| format!("Could not open Parfumo browser: {e}"))?;
         ready = Some(receiver);
         window
     };
     configure_parfumo_webview(&window)?;
     if let Some(receiver) = ready {
-        tauri::async_runtime::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(15)))
-            .await.map_err(|e| e.to_string())?
-            .map_err(|_| "Parfumo browser did not finish loading. Try again.".to_string())?;
+        tauri::async_runtime::spawn_blocking(move || {
+            receiver.recv_timeout(Duration::from_secs(15))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|_| "Parfumo browser did not finish loading. Try again.".to_string())?;
     }
-    if !matches!(window.url().ok().and_then(|url| url.host_str().map(str::to_owned)).as_deref(), Some("www.parfumo.com" | "parfumo.com")) {
-        return Err("Open Parfumo in Settings and return to its website before searching notes.".into());
+    if !matches!(
+        window
+            .url()
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .as_deref(),
+        Some("www.parfumo.com" | "parfumo.com")
+    ) {
+        return Err(
+            "Open Parfumo in Settings and return to its website before searching notes.".into(),
+        );
     }
     let query_js = serde_json::to_string(&query).map_err(|e| e.to_string())?;
     let search_id = NOTE_SEARCH_ID.fetch_add(1, Ordering::Relaxed);
-    let script = format!(r#"(() => {{
+    let script = format!(
+        r#"(() => {{
         const responses = window.__scentkeepNoteSearchResponses ??= new Map();
         const searchId = {search_id};
         (async () => {{
@@ -227,7 +388,8 @@ async fn search_notes_in_webview(app: tauri::AppHandle, query: String) -> Result
           finally {{ setTimeout(() => responses.delete(searchId), 30000); }}
         }})();
         return 'started';
-    }})()"#);
+    }})()"#
+    );
     let response = tauri::async_runtime::spawn_blocking(move || {
         evaluate_browser_script(&window, &script)?;
         let poll_script = format!("(() => {{ const responses = window.__scentkeepNoteSearchResponses; const result = responses?.get({search_id}); if (result) responses.delete({search_id}); return result ?? ''; }})()");
@@ -239,9 +401,15 @@ async fn search_notes_in_webview(app: tauri::AppHandle, query: String) -> Result
             std::thread::sleep(Duration::from_millis(100));
         }
     }).await.map_err(|error| error.to_string())??;
-    let value: serde_json::Value = serde_json::from_str(&response).map_err(|_| "Parfumo returned an invalid search response".to_string())?;
-    if let Some(error) = value.get("error").and_then(|value| value.as_str()) { return Err(format!("Parfumo browser search failed: {error}")); }
-    let status = value.get("status").and_then(|value| value.as_u64()).unwrap_or(0);
+    let value: serde_json::Value = serde_json::from_str(&response)
+        .map_err(|_| "Parfumo returned an invalid search response".to_string())?;
+    if let Some(error) = value.get("error").and_then(|value| value.as_str()) {
+        return Err(format!("Parfumo browser search failed: {error}"));
+    }
+    let status = value
+        .get("status")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
     if status == 403 {
         if let Some(window) = app.get_webview_window(LOGIN_WINDOW) {
             let _ = window.show();
@@ -249,8 +417,13 @@ async fn search_notes_in_webview(app: tauri::AppHandle, query: String) -> Result
         }
         return Err("Parfumo opened for a browser check. Complete it there, then try the note search again.".into());
     }
-    if status != 200 { return Err(format!("Parfumo search returned HTTP {status}.")); }
-    let body = value.get("body").and_then(|value| value.as_str()).unwrap_or_default();
+    if status != 200 {
+        return Err(format!("Parfumo search returned HTTP {status}."));
+    }
+    let body = value
+        .get("body")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
     Ok(parse_notes(body))
 }
 
@@ -277,17 +450,322 @@ async fn search_notes_with_session(query: String) -> Result<Vec<ParfumoNote>, St
     }).await.map_err(|e| e.to_string())?
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+fn categories_from_html(body: &str, note_name: &str) -> Vec<String> {
+    let html = Html::parse_document(body);
+    let links = Selector::parse("a[href]").expect("valid selector");
+    let mut categories = Vec::new();
+    for link in html.select(&links) {
+        let href = link.value().attr("href").unwrap_or_default();
+        if !href.contains("/Fragrance_Note/") && !href.contains("/Fragrance_Notes/") {
+            continue;
+        }
+        let label = link
+            .text()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if label.is_empty()
+            || label.eq_ignore_ascii_case(note_name)
+            || label.eq_ignore_ascii_case("Fragrance Notes")
+        {
+            continue;
+        }
+        if !categories
+            .iter()
+            .any(|saved: &String| saved.eq_ignore_ascii_case(&label))
+        {
+            categories.push(label);
+        }
+    }
+    clean_categories(note_name, categories)
+}
+
+pub(crate) fn clean_categories(note_name: &str, categories: Vec<String>) -> Vec<String> {
+    let mut cleaned = Vec::new();
+    for category in categories {
+        let label = category.split_whitespace().collect::<Vec<_>>().join(" ");
+        let lower = label.to_lowercase();
+        if label.is_empty()
+            || label.eq_ignore_ascii_case(note_name)
+            || matches!(
+                lower.as_str(),
+                "fragrance notes" | "scentmix" | "next" | "previous"
+            )
+            || label.chars().all(|character| character.is_ascii_digit())
+            || !label.chars().any(char::is_alphabetic)
+            || cleaned
+                .iter()
+                .any(|saved: &String| saved.eq_ignore_ascii_case(&label))
+        {
+            continue;
+        }
+        cleaned.push(label);
+    }
+    cleaned
+}
+
+pub(crate) fn clean_saved_note_categories(conn: &rusqlite::Connection) -> Result<usize, String> {
+    let mut statement = conn
+        .prepare("SELECT name, categories FROM note_images WHERE categories != '[]'")
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut updates = Vec::new();
+    for row in rows {
+        let (name, raw) = row.map_err(|e| e.to_string())?;
+        let cleaned = serde_json::to_string(&clean_categories(
+            &name,
+            serde_json::from_str(&raw).unwrap_or_default(),
+        ))
+        .map_err(|e| e.to_string())?;
+        if cleaned != raw {
+            updates.push((name, cleaned));
+        }
+    }
+    drop(statement);
+    for (name, categories) in &updates {
+        conn.execute(
+            "UPDATE note_images SET categories = ?2 WHERE name = ?1",
+            rusqlite::params![name, categories],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(updates.len())
+}
+
+#[cfg(target_os = "linux")]
+fn categories_in_webview(
+    window: &tauri::WebviewWindow,
+    notes: &[(String, String)],
+) -> Result<Vec<Vec<String>>, String> {
+    let payload = serde_json::to_string(notes).map_err(|e| e.to_string())?;
+    let search_id = NOTE_SEARCH_ID.fetch_add(1, Ordering::Relaxed);
+    let script = format!(
+        r#"(() => {{
+      const responses = window.__scentkeepNoteSearchResponses ??= new Map();
+      const items = {payload};
+      const categoryLabels = (html, noteName) => {{
+        const document = new DOMParser().parseFromString(html, 'text/html');
+        const seen = new Set();
+        return [...document.querySelectorAll('a[href*="/Fragrance_Note/"], a[href*="/Fragrance_Notes/"]')].slice(0, 12).map(link => link.textContent.trim().replace(/\s+/g, ' ')).filter(label => label && label.toLocaleLowerCase() !== noteName.toLocaleLowerCase() && label.toLocaleLowerCase() !== 'fragrance notes' && !seen.has(label.toLocaleLowerCase()) && seen.add(label.toLocaleLowerCase()));
+      }};
+      (async () => {{
+        try {{
+          const result = [];
+          for (const [name, url] of items) {{
+            const response = await fetch(url, {{ credentials: 'same-origin' }});
+            result.push(response.ok ? categoryLabels(await response.text(), name) : []);
+          }}
+          responses.set({search_id}, JSON.stringify(result));
+        }} catch (error) {{ responses.set({search_id}, JSON.stringify({{ error: String(error) }})); }}
+      }})();
+      return 'started';
+    }})()"#
+    );
+    evaluate_browser_script(window, &script)?;
+    let poll = format!(
+        "(() => {{ const result = window.__scentkeepNoteSearchResponses?.get({search_id}); if (result) window.__scentkeepNoteSearchResponses.delete({search_id}); return result ?? ''; }})()"
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let response = evaluate_browser_script(window, &poll)?;
+        if !response.is_empty() {
+            let value: serde_json::Value =
+                serde_json::from_str(&response).map_err(|e| e.to_string())?;
+            if let Some(error) = value.get("error").and_then(|value| value.as_str()) {
+                return Err(error.to_owned());
+            }
+            let categories: Vec<Vec<String>> =
+                serde_json::from_value(value).map_err(|e| e.to_string())?;
+            return Ok(notes
+                .iter()
+                .zip(categories)
+                .map(|((name, _), values)| clean_categories(name, values))
+                .collect());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("Timed out reading Parfumo note categories".into());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn categories_with_session(notes: &[(String, String)]) -> Result<Vec<Vec<String>>, String> {
+    let session = load_session()?.ok_or("Connect Parfumo in Settings first.")?;
+    let cookies = session
+        .cookies
+        .iter()
+        .filter(|cookie| {
+            cookie
+                .domain
+                .as_deref()
+                .is_none_or(|domain| domain.trim_start_matches('.').ends_with("parfumo.com"))
+        })
+        .map(|cookie| format!("{}={}", cookie.name, cookie.value))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|e| e.to_string())?;
+    notes
+        .iter()
+        .map(|(name, url)| {
+            let response = client
+                .get(url)
+                .header(reqwest::header::COOKIE, &cookies)
+                .header(reqwest::header::USER_AGENT, "Mozilla/5.0")
+                .send()
+                .map_err(|e| e.to_string())?;
+            Ok(if response.status().is_success() {
+                categories_from_html(&response.text().map_err(|e| e.to_string())?, name)
+            } else {
+                Vec::new()
+            })
+        })
+        .collect()
+}
+
 #[tauri::command]
-pub(crate) fn save_parfumo_note(app: tauri::AppHandle, note: ParfumoNote) -> Result<(), String> {
+pub(crate) async fn save_parfumo_note(
+    app: tauri::AppHandle,
+    mut note: ParfumoNote,
+) -> Result<(), String> {
     let name = note.name.trim();
-    if name.is_empty() || name.chars().count() > 200 { return Err("Choose a valid note".into()); }
-    let image_url = if note.image_url.is_empty() { String::new() } else { image_link(&note.image_url) };
-    let parfumo_url = if note.parfumo_url.is_empty() { String::new() } else { parfumo_link(&note.parfumo_url) };
+    if name.is_empty() || name.chars().count() > 200 {
+        return Err("Choose a valid note".into());
+    }
+    let image_url = if note.image_url.is_empty() {
+        String::new()
+    } else {
+        image_link(&note.image_url)
+    };
+    let parfumo_url = if note.parfumo_url.is_empty() {
+        String::new()
+    } else {
+        parfumo_link(&note.parfumo_url)
+    };
+    if note.categories.is_empty() && !parfumo_url.is_empty() {
+        let request = vec![(name.to_owned(), parfumo_url.clone())];
+        #[cfg(target_os = "linux")]
+        if let Some(window) = app.get_webview_window(LOGIN_WINDOW) {
+            note.categories = categories_in_webview(&window, &request)
+                .unwrap_or_default()
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            note.categories = categories_with_session(&request)
+                .unwrap_or_default()
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+        }
+    }
+    note.categories = clean_categories(name, note.categories);
+    let categories = serde_json::to_string(&note.categories).map_err(|e| e.to_string())?;
     let mut conn = crate::database(&app)?;
     let transaction = conn.transaction().map_err(|e| e.to_string())?;
-    transaction.execute("INSERT INTO note_images (name, image_data_url, parfumo_url) VALUES (?1, ?2, ?3) ON CONFLICT(name) DO UPDATE SET image_data_url = CASE WHEN excluded.image_data_url = '' THEN note_images.image_data_url ELSE excluded.image_data_url END, parfumo_url = CASE WHEN excluded.parfumo_url = '' THEN note_images.parfumo_url ELSE excluded.parfumo_url END", rusqlite::params![name, image_url, parfumo_url]).map_err(|e| e.to_string())?;
+    transaction.execute("INSERT INTO note_images (name, image_data_url, parfumo_url, categories) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(name) DO UPDATE SET image_data_url = CASE WHEN excluded.image_data_url = '' THEN note_images.image_data_url ELSE excluded.image_data_url END, parfumo_url = CASE WHEN excluded.parfumo_url = '' THEN note_images.parfumo_url ELSE excluded.parfumo_url END, categories = CASE WHEN excluded.categories = '[]' THEN note_images.categories ELSE excluded.categories END", rusqlite::params![name, image_url, parfumo_url, categories]).map_err(|e| e.to_string())?;
     transaction.commit().map_err(|e| e.to_string())?;
     crate::backup::after_change(&app)
+}
+
+#[tauri::command]
+pub(crate) async fn refresh_parfumo_note_metadata(app: tauri::AppHandle) -> Result<usize, String> {
+    let notes = {
+        let conn = crate::database(&app)?;
+        let mut statement = conn
+            .prepare("SELECT name, parfumo_url FROM note_images WHERE categories = '[]'")
+            .map_err(|e| e.to_string())?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| e.to_string())?
+    };
+    if notes.is_empty() {
+        return Ok(0);
+    }
+    let mut resolved = notes;
+    #[cfg(target_os = "linux")]
+    {
+        if app.get_webview_window(LOGIN_WINDOW).is_none() {
+            // Create the same hidden authenticated browser used by note search,
+            // allowing old saved notes to be enriched after an app restart.
+            let _ = search_notes_in_webview(app.clone(), "la".into()).await?;
+        }
+        for (name, url) in &mut resolved {
+            if !url.is_empty() {
+                continue;
+            }
+            if let Some(found) = search_notes_in_webview(app.clone(), name.clone())
+                .await?
+                .into_iter()
+                .find(|note| note.name.eq_ignore_ascii_case(name))
+            {
+                *url = found.parfumo_url;
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        for (name, url) in &mut resolved {
+            if !url.is_empty() {
+                continue;
+            }
+            if let Some(found) = search_notes_with_session(name.clone())
+                .await?
+                .into_iter()
+                .find(|note| note.name.eq_ignore_ascii_case(name))
+            {
+                *url = found.parfumo_url;
+            }
+        }
+    }
+    resolved.retain(|(_, url)| !url.is_empty());
+    if resolved.is_empty() {
+        return Ok(0);
+    }
+    #[cfg(target_os = "linux")]
+    let found = categories_in_webview(
+        &app.get_webview_window(LOGIN_WINDOW)
+            .ok_or("Parfumo browser is unavailable")?,
+        &resolved,
+    )?;
+    #[cfg(not(target_os = "linux"))]
+    let found = categories_with_session(&resolved)?;
+    let conn = crate::database(&app)?;
+    let mut updated = 0;
+    for ((name, url), categories) in resolved.into_iter().zip(found) {
+        if categories.is_empty() {
+            continue;
+        }
+        conn.execute(
+            "UPDATE note_images SET categories = ?2, parfumo_url = CASE WHEN parfumo_url = '' THEN ?3 ELSE parfumo_url END WHERE name = ?1",
+            rusqlite::params![
+                name,
+                serde_json::to_string(&categories).map_err(|e| e.to_string())?, url
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        updated += 1;
+    }
+    if updated > 0 {
+        crate::backup::after_change(&app)?;
+    }
+    Ok(updated)
 }
 
 #[cfg(test)]
@@ -304,39 +782,88 @@ mod note_search_tests {
 
     #[test]
     fn parses_html_suggestions_and_keeps_parfumo_links() {
-        let notes = parse_notes(r#"<a href="/Fragrance_Notes/Caramel"><img src="/img/caramel.jpg">Caramel</a><a href="https://evil.example/note">Other</a>"#);
+        let notes = parse_notes(
+            r#"<a href="/Fragrance_Notes/Caramel"><img src="/img/caramel.jpg">Caramel</a><a href="https://evil.example/note">Other</a>"#,
+        );
         assert_eq!(notes[0].name, "Caramel");
-        assert_eq!(notes[0].image_url, "https://www.parfumo.com/img/caramel.jpg");
-        assert_eq!(notes[0].parfumo_url, "https://www.parfumo.com/Fragrance_Notes/Caramel");
+        assert_eq!(
+            notes[0].image_url,
+            "https://www.parfumo.com/img/caramel.jpg"
+        );
+        assert_eq!(
+            notes[0].parfumo_url,
+            "https://www.parfumo.com/Fragrance_Notes/Caramel"
+        );
         assert!(notes[1].parfumo_url.is_empty());
     }
 
     #[test]
     fn parses_json_suggestions() {
-        let notes = parse_notes(r#"{"results":[{"name":"Cardamom","image":"/img/cardamom.jpg","url":"/Fragrance_Notes/Cardamom"}]}"#);
+        let notes = parse_notes(
+            r#"{"results":[{"name":"Cardamom","image":"/img/cardamom.jpg","url":"/Fragrance_Notes/Cardamom"}]}"#,
+        );
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].name, "Cardamom");
     }
 
     #[test]
     fn parses_parfumo_note_table_rows() {
-        let notes = parse_notes(r#"<table id="ls_popup_results_notes"><tr><td><div class="pad pointer bold" data-name_url="Oud"><img src="https://media.parfumo.com/notes_png/oud.png" alt="Oud"> Oud</div></td></tr><tr><td><div data-name_url="Cambodian_oud"><img src="https://media.parfumo.com/notes_png/oud.png" alt="Cambodian oud"> Cambodian oud</div></td></tr></table>"#);
+        let notes = parse_notes(
+            r#"<table id="ls_popup_results_notes"><tr><td><div class="pad pointer bold" data-name_url="Oud"><img src="https://media.parfumo.com/notes_png/oud.png" alt="Oud"> Oud</div></td></tr><tr><td><div data-name_url="Cambodian_oud"><img src="https://media.parfumo.com/notes_png/oud.png" alt="Cambodian oud"> Cambodian oud</div></td></tr></table>"#,
+        );
         assert_eq!(notes.len(), 2);
         assert_eq!(notes[0].name, "Oud");
-        assert_eq!(notes[0].parfumo_url, "https://www.parfumo.com/Fragrance_Note/Oud");
+        assert_eq!(
+            notes[0].parfumo_url,
+            "https://www.parfumo.com/Fragrance_Note/Oud"
+        );
         assert_eq!(notes[1].name, "Cambodian oud");
     }
 
     #[test]
+    fn parses_note_categories_from_detail_page_hierarchy() {
+        let categories = categories_from_html(
+            r#"<a href="/Fragrance_Notes/">Fragrance Notes</a><a href="/Fragrance_Note/Lavender">Lavender</a><a href="/Fragrance_Notes/Floral_Notes">Floral Notes</a><a href="/Fragrance_Notes/Flowers">Flowers</a><a href="/Fragrance_Notes/Herbaceous_Notes">Herbaceous Notes</a>"#,
+            "Lavender",
+        );
+        assert_eq!(categories, ["Floral Notes", "Flowers", "Herbaceous Notes"]);
+    }
+
+    #[test]
+    fn removes_scentmix_and_pagination_from_categories() {
+        assert_eq!(
+            clean_categories(
+                "Kiwi",
+                ["Fruits", "ScentMix", "1", "2", "20", "Next", "Kiwi"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+            ),
+            ["Fruits"]
+        );
+    }
+
+    #[test]
     fn uses_full_resolution_note_images_and_upgrades_saved_thumbnails() {
-        let thumbnail = "https://media.parfumo.com/notes_png/9d/oud_1200.png?width=40&aspect_ratio=1:1";
+        let thumbnail =
+            "https://media.parfumo.com/notes_png/9d/oud_1200.png?width=40&aspect_ratio=1:1";
         let full = "https://media.parfumo.com/notes_png/9d/oud_1200.png";
         assert_eq!(image_link(thumbnail), full);
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE note_images (name TEXT PRIMARY KEY, image_data_url TEXT NOT NULL);").unwrap();
-        conn.execute("INSERT INTO note_images VALUES ('Oud', ?1)", [thumbnail]).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE note_images (name TEXT PRIMARY KEY, image_data_url TEXT NOT NULL);",
+        )
+        .unwrap();
+        conn.execute("INSERT INTO note_images VALUES ('Oud', ?1)", [thumbnail])
+            .unwrap();
         assert_eq!(upgrade_note_images(&conn).unwrap(), 1);
-        let saved: String = conn.query_row("SELECT image_data_url FROM note_images WHERE name = 'Oud'", [], |row| row.get(0)).unwrap();
+        let saved: String = conn
+            .query_row(
+                "SELECT image_data_url FROM note_images WHERE name = 'Oud'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(saved, full);
         assert_eq!(upgrade_note_images(&conn).unwrap(), 0);
     }
@@ -494,20 +1021,31 @@ fn clear_parfumo_browser(app: &tauri::AppHandle) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         {
             let (sender, receiver) = std::sync::mpsc::channel();
-            window.with_webview(move |webview| {
-                if let Some(manager) = webview.inner().website_data_manager() {
-                    manager.clear(WebsiteDataTypes::ALL, webkit2gtk::glib::TimeSpan::from_seconds(0), None::<&webkit2gtk::gio::Cancellable>, move |result| {
-                        let _ = sender.send(result.map_err(|error| error.to_string()));
-                    });
-                } else {
-                    let _ = sender.send(Err("Parfumo browser storage is unavailable".to_string()));
-                }
-            }).map_err(|error| error.to_string())?;
-            receiver.recv_timeout(Duration::from_secs(10))
+            window
+                .with_webview(move |webview| {
+                    if let Some(manager) = webview.inner().website_data_manager() {
+                        manager.clear(
+                            WebsiteDataTypes::ALL,
+                            webkit2gtk::glib::TimeSpan::from_seconds(0),
+                            None::<&webkit2gtk::gio::Cancellable>,
+                            move |result| {
+                                let _ = sender.send(result.map_err(|error| error.to_string()));
+                            },
+                        );
+                    } else {
+                        let _ =
+                            sender.send(Err("Parfumo browser storage is unavailable".to_string()));
+                    }
+                })
+                .map_err(|error| error.to_string())?;
+            receiver
+                .recv_timeout(Duration::from_secs(10))
                 .map_err(|_| "Timed out clearing Parfumo browser data".to_string())??;
         }
         #[cfg(not(target_os = "linux"))]
-        window.clear_all_browsing_data().map_err(|error| error.to_string())?;
+        window
+            .clear_all_browsing_data()
+            .map_err(|error| error.to_string())?;
         window.close().map_err(|error| error.to_string())?;
     } else if data_dir.exists() {
         std::fs::remove_dir_all(&data_dir)
@@ -519,7 +1057,8 @@ fn clear_parfumo_browser(app: &tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub(crate) async fn reset_parfumo_browser(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || clear_parfumo_browser(&app))
-        .await.map_err(|error| error.to_string())?
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

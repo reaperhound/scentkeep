@@ -14,6 +14,8 @@ const taskLabels: Record<string, string> = {
   delete_note: 'Deleting note…',
   set_note_image: 'Saving note image…',
   remove_note_image: 'Removing note image…',
+  set_note_categories: 'Saving note categories…',
+  refresh_parfumo_note_metadata: 'Filling note metadata from Parfumo…',
   get_backup_folder: 'Loading backup settings…',
   set_backup_folder: 'Setting up local backups…',
   get_webdav_backup: 'Loading WebDAV settings…',
@@ -57,8 +59,8 @@ export type Fragrance = {
   shelf: 'Collection' | 'Wishlist' | 'Empties'; bottlesOwned: number; bottlesFinished: number; favourite: boolean; priceBought: number | null; currentPrice: number | null;
 };
 
-export type NoteImage = { name: string; imageUrl: string; parfumoUrl: string; usageCount: number };
-export type ParfumoNote = { name: string; imageUrl: string; parfumoUrl: string };
+export type NoteImage = { name: string; imageUrl: string; parfumoUrl: string; categories: string[]; usageCount: number };
+export type ParfumoNote = { name: string; imageUrl: string; parfumoUrl: string; categories?: string[] };
 export type CsvImportReport = { imported: number; duplicates: string[] };
 export type ParfumoStatus = { connected: boolean; cookieCount: number };
 export type WebdavBackup = { url: string; username: string; needsSync: boolean };
@@ -74,10 +76,12 @@ export const backend = {
   createNote: (name: string) => invoke<void>('create_note', { name }),
   searchParfumoNotes: (query: string) => invoke<ParfumoNote[]>('search_parfumo_notes', { query }),
   saveParfumoNote: (note: ParfumoNote) => invoke<void>('save_parfumo_note', { note }),
+  refreshParfumoNoteMetadata: () => invoke<number>('refresh_parfumo_note_metadata'),
   renameNote: (oldName: string, newName: string) => invoke<void>('rename_note', { oldName, newName }),
   deleteNote: (name: string) => invoke<void>('delete_note', { name }),
   setNoteImage: (name: string, imageUrl: string) => invoke<void>('set_note_image', { name, imageUrl }),
   removeNoteImage: (name: string) => invoke<void>('remove_note_image', { name }),
+  setNoteCategories: (name: string, categories: string[]) => invoke<void>('set_note_categories', { name, categories }),
   getBackupFolder: () => invoke<string | null>('get_backup_folder'),
   setBackupFolder: (folder: string) => invoke<void>('set_backup_folder', { folder }),
   getWebdavBackup: () => invoke<WebdavBackup | null>('get_webdav_backup'),
