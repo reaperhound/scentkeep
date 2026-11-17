@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tauri::Manager;
 
+mod accords;
 mod backup;
 mod csv_io;
 mod parfumo;
@@ -646,6 +647,7 @@ pub fn run() {
             update_fragrance,
             delete_fragrance,
             list_fragrances,
+            accords::get_fragrance_accords,
             list_note_images,
             set_note_image,
             remove_note_image,

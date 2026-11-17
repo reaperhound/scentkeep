@@ -3,6 +3,7 @@ import { writable } from 'svelte/store';
 
 const taskLabels: Record<string, string> = {
   list_fragrances: 'Loading fragrances…',
+  get_fragrance_accords: 'Calculating main accords…',
   list_note_images: 'Loading perfume notes…',
   save_fragrance: 'Saving fragrance…',
   update_fragrance: 'Saving changes…',
@@ -60,6 +61,7 @@ export type Fragrance = {
 };
 
 export type NoteImage = { name: string; imageUrl: string; parfumoUrl: string; categories: string[]; usageCount: number };
+export type AccordBar = { key: string; label: string; score: number; relativeStrength: number; contributingNotes: string[] };
 export type ParfumoNote = { name: string; imageUrl: string; parfumoUrl: string; categories?: string[] };
 export type CsvImportReport = { imported: number; duplicates: string[] };
 export type ParfumoStatus = { connected: boolean; cookieCount: number };
@@ -69,6 +71,7 @@ export type BackupStatus = { state: 'idle' | 'queued' | 'running' | 'error'; err
 
 export const backend = {
   listFragrances: () => invoke<Fragrance[]>('list_fragrances'),
+  getFragranceAccords: (fragranceId: number) => invoke<AccordBar[]>('get_fragrance_accords', { fragranceId }),
   saveFragrance: (fragrance: Fragrance) => invoke<number>('save_fragrance', { fragrance }),
   updateFragrance: (fragrance: Fragrance) => invoke<void>('update_fragrance', { fragrance }),
   deleteFragrance: (id: number) => invoke<void>('delete_fragrance', { id }),

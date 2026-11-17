@@ -8,7 +8,7 @@
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { check, type Update } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
-  import { activeBackendTasks, backend, type BackupStatus, type CsvImportReport, type Fragrance, type NoteImage, type ParfumoNote, type ParfumoStatus, type WebdavBackup } from '$lib/backend';
+  import { activeBackendTasks, backend, type AccordBar, type BackupStatus, type CsvImportReport, type Fragrance, type NoteImage, type ParfumoNote, type ParfumoStatus, type WebdavBackup } from '$lib/backend';
   import NavIcon from '$lib/NavIcon.svelte';
   import './redesign.css';
 
@@ -31,6 +31,10 @@
   let profileDialogOpen = $state(false);
   let mobileSidebarOpen = $state(false);
   let selectedId = $state<number | null>(null);
+  let fragranceAccords = $state<AccordBar[]>([]);
+  let fragranceAccordsLoading = $state(false);
+  let fragranceAccordsError = $state('');
+  let accordRequestVersion = 0;
   let noteImages = $state<NoteImage[]>([]);
   let noteSearch = $state('');
   let newNoteName = $state('');
@@ -408,10 +412,10 @@
   function imageFor(note: string) {
     return noteImagesByName.get(note.toLocaleLowerCase())?.imageUrl;
   }
-  function parfumoThumbnail(imageUrl: string) {
+  function parfumoThumbnail(imageUrl: string, width = 64) {
     if (!imageUrl.startsWith('https://media.parfumo.com/notes_png/')) return imageUrl;
     const thumbnail = new URL(imageUrl);
-    thumbnail.searchParams.set('width', '64');
+    thumbnail.searchParams.set('width', String(width));
     thumbnail.searchParams.set('aspect_ratio', '1:1');
     return thumbnail.toString();
   }
@@ -533,7 +537,7 @@
     }
     if (step < 2) step += 1;
   }
-  function showShelf(shelf: 'Collection' | 'Wishlist' | 'Empties') { activeShelf = shelf; view = 'library'; error = ''; success = ''; mobileSidebarOpen = false; }
+  function showShelf(shelf: 'Collection' | 'Wishlist' | 'Empties') { activeShelf = shelf; view = 'library'; error = ''; success = ''; mobileSidebarOpen = false; accordRequestVersion += 1; fragranceAccordsLoading = false; }
   function showSettings() { view = 'settings'; error = ''; success = ''; mobileSidebarOpen = false; }
   async function openParfumoLogin() {
     parfumoBusy = true; error = ''; success = '';
@@ -579,8 +583,25 @@
     duplicateNoteLayer = null;
     step = 0; concentrationMenuOpen = false; view = 'form'; error = ''; success = '';
   }
+  async function loadFragranceAccords(fragranceId: number) {
+    const version = ++accordRequestVersion;
+    fragranceAccords = [];
+    fragranceAccordsError = '';
+    fragranceAccordsLoading = true;
+    try {
+      const accords = await backend.getFragranceAccords(fragranceId);
+      if (version === accordRequestVersion) fragranceAccords = accords;
+    } catch (cause) {
+      if (version === accordRequestVersion) fragranceAccordsError = String(cause);
+    } finally {
+      if (version === accordRequestVersion) fragranceAccordsLoading = false;
+    }
+  }
   function openDetail(item: Fragrance) {
     openCardMenuId = null; selectedId = item.id ?? null; activeShelf = item.shelf; view = 'detail'; error = ''; success = '';
+    fragranceAccords = [];
+    fragranceAccordsError = '';
+    if (item.id !== undefined) void loadFragranceAccords(item.id);
   }
   function startEdit(item: Fragrance) {
     fragrance = { ...item, topNotes: [...item.topNotes], heartNotes: [...item.heartNotes], baseNotes: [...item.baseNotes] };
@@ -759,9 +780,23 @@
         <div class="detail-layout">
           <div class="detail-left"><div class="detail-image">{#if selectedFragrance.imageUrl}<img src={selectedFragrance.imageUrl} alt={selectedFragrance.name} />{:else}<div class="detail-placeholder"><NavIcon name="bottle" size={72} /><small>No bottle image</small></div>{/if}</div><div class="detail-image-caption">{selectedFragrance.brand}, {selectedFragrance.year}</div><button class="detail-edit" onclick={() => startEdit(selectedFragrance)}>✎ Edit fragrance</button></div>
           <div class="detail-main"><h1>{selectedFragrance.name}</h1><div class="detail-kicker">{selectedFragrance.collection || 'Fragrance collection'}</div><div class="detail-brand">{selectedFragrance.brand}<span class="year-pill">{selectedFragrance.year}</span></div><div class="audience-pill">{selectedFragrance.audience}</div>{#if selectedFragrance.concentration}<div class="audience-pill concentration-pill">{selectedFragrance.concentration}</div>{/if}<div class="ownership-summary"><span>{selectedFragrance.shelf}</span><span>Owned: {selectedFragrance.bottlesOwned}</span><span>Finished: {selectedFragrance.bottlesFinished}</span>{#if selectedFragrance.favourite}<span>★ Favourite</span>{/if}{#if selectedFragrance.priceBought !== null}<span>Price bought: {selectedFragrance.priceBought.toFixed(2)}</span>{/if}{#if selectedFragrance.shelf === 'Wishlist' && selectedFragrance.currentPrice !== null}<span>Current price: {selectedFragrance.currentPrice.toFixed(2)}</span>{/if}</div>{#if selectedFragrance.description}<p class="detail-description">{selectedFragrance.description}</p>{/if}
+            <section class="detail-section accord-section"><div class="detail-section-title"><h2>Main accords</h2><p>Relative strength estimated from the categories assigned to each note.</p></div>
+              {#if fragranceAccordsLoading}<p class="accord-status">Calculating accords…</p>
+              {:else if fragranceAccordsError}<p class="accord-status accord-error">Could not calculate accords: {fragranceAccordsError}</p>
+              {:else if fragranceAccords.length}
+                <div class="accord-list">
+                  {#each fragranceAccords as accord}
+                    <div class="accord-row" title={`Contributing notes: ${accord.contributingNotes.join(', ')}`}>
+                      <div class="accord-label"><span>{accord.label}</span><strong>{accord.relativeStrength}%</strong></div>
+                      <div class="accord-track" role="img" aria-label={`${accord.label}: ${accord.relativeStrength}% relative strength`}><div class="accord-bar-fill" style={`width: ${accord.relativeStrength}%`}></div></div>
+                    </div>
+                  {/each}
+                </div>
+              {:else}<p class="accord-status">Add categories to this fragrance’s notes to generate its accord profile.</p>{/if}
+            </section>
             <section class="detail-section"><div class="detail-section-title"><h2>Fragrance pyramid</h2></div>
               {#each [{ title: 'Top notes', notes: selectedFragrance.topNotes, icon: '✧' }, { title: 'Heart notes', notes: selectedFragrance.heartNotes, icon: '❀' }, { title: 'Base notes', notes: selectedFragrance.baseNotes, icon: '◆' }] as group}
-                <div class="pyramid-row"><div class="pyramid-label">{group.title}</div><div class="pyramid-notes">{#each group.notes as note}<div class="pyramid-note"><div class="pyramid-note-image">{#if imageFor(note)}<img src={imageFor(note)} alt="" />{:else}<NavIcon name="notes" size={18} />{/if}</div><span>{note}</span></div>{/each}{#if group.notes.length === 0}<span class="no-notes">No notes recorded</span>{/if}</div></div>
+                <div class="pyramid-row"><div class="pyramid-label">{group.title}</div><div class="pyramid-notes">{#each group.notes as note}{@const noteImage = imageFor(note)}<div class="pyramid-note"><div class="pyramid-note-image">{#if noteImage}<img src={parfumoThumbnail(noteImage, 50)} alt="" />{:else}<NavIcon name="notes" size={18} />{/if}</div><span>{note}</span></div>{/each}{#if group.notes.length === 0}<span class="no-notes">No notes recorded</span>{/if}</div></div>
               {/each}
             </section>
             <div class="detail-meta"><section><div class="detail-section-title"><h2>Perfumer</h2></div><p>{selectedFragrance.perfumer || 'Not recorded'}</p></section><section><div class="detail-section-title"><h2>Bottle rating</h2></div>{#if selectedFragrance.bottleRating !== null}<div class="detail-rating"><strong>{selectedFragrance.bottleRating.toFixed(1)}</strong><span>/ 10</span></div><div class="rating-bar"><div style={`width: ${selectedFragrance.bottleRating * 10}%`}></div></div>{#if selectedFragrance.ratingCount !== null}<small>{selectedFragrance.ratingCount} {selectedFragrance.ratingCount === 1 ? 'rating' : 'ratings'}</small>{/if}{:else}<p>Not rated yet</p>{/if}</section></div>
