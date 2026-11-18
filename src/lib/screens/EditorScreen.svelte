@@ -113,7 +113,7 @@
 
 <div class="page-content">
   <div class="heading"><div><h1>{fragrance.id === undefined ? 'Add a fragrance' : 'Edit fragrance'}</h1><p>Capture the details that make each scent unforgettable.</p></div><div class="step-count">STEP 0{step + 1} <span>/ 03</span></div></div>
-  <div class="progress" aria-label="Form progress">{#each steps as label, index}<button class:current={step === index} class:done={step > index} onclick={() => { if (index < step) step = index; }}><span class="step-number">{step > index ? '✓' : `0${index + 1}`}</span><span>{label}</span></button>{#if index < 2}<div class:filled={step > index} class="connector"></div>{/if}{/each}</div>
+  <div class="progress" aria-label="Form progress">{#each steps as label, index}<button type="button" class:current={step === index} class:done={step > index} aria-current={step === index ? 'step' : undefined} onclick={() => { if (fragrance.id !== undefined || index < step) { step = index; localError = ''; } }}><span class="step-number">{step > index ? '✓' : `0${index + 1}`}</span><span>{label}</span></button>{#if index < 2}<div class:filled={step > index} class="connector"></div>{/if}{/each}</div>
   {#if localError || error}<div class="message error" role="alert">{localError || error}</div>{/if}
   {#if step === 0}
     <section class="parfumo-import" aria-label="Import from Parfumo">
