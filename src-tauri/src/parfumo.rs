@@ -637,7 +637,7 @@ fn categories_with_session(notes: &[(String, String)]) -> Result<Vec<Vec<String>
 pub(crate) async fn save_parfumo_note(
     app: tauri::AppHandle,
     mut note: ParfumoNote,
-) -> Result<(), String> {
+) -> Result<crate::NoteImage, String> {
     let name = note.name.trim();
     if name.is_empty() || name.chars().count() > 200 {
         return Err("Choose a valid note".into());
@@ -677,7 +677,8 @@ pub(crate) async fn save_parfumo_note(
     let transaction = conn.transaction().map_err(|e| e.to_string())?;
     transaction.execute("INSERT INTO note_images (name, image_data_url, parfumo_url, categories) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(name) DO UPDATE SET image_data_url = CASE WHEN excluded.image_data_url = '' THEN note_images.image_data_url ELSE excluded.image_data_url END, parfumo_url = CASE WHEN excluded.parfumo_url = '' THEN note_images.parfumo_url ELSE excluded.parfumo_url END, categories = CASE WHEN excluded.categories = '[]' THEN note_images.categories ELSE excluded.categories END", rusqlite::params![name, image_url, parfumo_url, categories]).map_err(|e| e.to_string())?;
     transaction.commit().map_err(|e| e.to_string())?;
-    crate::backup::after_change(&app)
+    crate::backup::after_change(&app)?;
+    crate::load_note_image(&conn, name)
 }
 
 #[tauri::command]

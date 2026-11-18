@@ -505,7 +505,7 @@ fn load_fragrances(conn: &Connection) -> Result<Vec<Fragrance>, String> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct NoteImage {
+pub(crate) struct NoteImage {
     name: String,
     image_url: String,
     parfumo_url: String,
@@ -550,8 +550,30 @@ fn load_note_images(conn: &Connection) -> Result<Vec<NoteImage>, String> {
         .map_err(|e| e.to_string())
 }
 
+pub(crate) fn load_note_image(conn: &Connection, name: &str) -> Result<NoteImage, String> {
+    conn.query_row(
+        "SELECT ni.name, ni.image_data_url, ni.parfumo_url, ni.categories,
+                COUNT(DISTINCT fn.fragrance_id)
+         FROM note_images ni
+         LEFT JOIN fragrance_notes fn ON fn.note_name = ni.name
+         WHERE ni.name = ?1
+         GROUP BY ni.name, ni.image_data_url, ni.parfumo_url, ni.categories",
+        [name],
+        |row| {
+            Ok(NoteImage {
+                name: row.get(0)?,
+                image_url: row.get(1)?,
+                parfumo_url: row.get(2)?,
+                categories: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
+                usage_count: row.get(4)?,
+            })
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
-fn create_note(app: tauri::AppHandle, name: String) -> Result<(), String> {
+fn create_note(app: tauri::AppHandle, name: String) -> Result<NoteImage, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("Enter a note name".into());
@@ -574,7 +596,8 @@ fn create_note(app: tauri::AppHandle, name: String) -> Result<(), String> {
             }
         })?;
     transaction.commit().map_err(|e| e.to_string())?;
-    backup::after_change(&app)
+    backup::after_change(&app)?;
+    load_note_image(&conn, name)
 }
 
 fn ensure_unique_note(
@@ -660,7 +683,11 @@ fn rewrite_fragrance_notes(
 }
 
 #[tauri::command]
-fn rename_note(app: tauri::AppHandle, old_name: String, new_name: String) -> Result<(), String> {
+fn rename_note(
+    app: tauri::AppHandle,
+    old_name: String,
+    new_name: String,
+) -> Result<NoteImage, String> {
     let old_name = old_name.trim();
     let new_name = new_name.trim();
     if new_name.is_empty() {
@@ -686,7 +713,8 @@ fn rename_note(app: tauri::AppHandle, old_name: String, new_name: String) -> Res
     }
     rewrite_fragrance_notes(&transaction, old_name, Some(new_name))?;
     transaction.commit().map_err(|e| e.to_string())?;
-    backup::after_change(&app)
+    backup::after_change(&app)?;
+    load_note_image(&conn, new_name)
 }
 
 #[tauri::command]
@@ -705,7 +733,11 @@ fn delete_note(app: tauri::AppHandle, name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_note_image(app: tauri::AppHandle, name: String, image_url: String) -> Result<(), String> {
+fn set_note_image(
+    app: tauri::AppHandle,
+    name: String,
+    image_url: String,
+) -> Result<NoteImage, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("Note name is required".into());
@@ -721,11 +753,12 @@ fn set_note_image(app: tauri::AppHandle, name: String, image_url: String) -> Res
     if changed == 0 {
         return Err("Note not found".into());
     }
-    backup::after_change(&app)
+    backup::after_change(&app)?;
+    load_note_image(&conn, name)
 }
 
 #[tauri::command]
-fn remove_note_image(app: tauri::AppHandle, name: String) -> Result<(), String> {
+fn remove_note_image(app: tauri::AppHandle, name: String) -> Result<NoteImage, String> {
     let conn = database(&app)?;
     let changed = conn
         .execute(
@@ -736,7 +769,8 @@ fn remove_note_image(app: tauri::AppHandle, name: String) -> Result<(), String> 
     if changed == 0 {
         return Err("Note not found".into());
     }
-    backup::after_change(&app)
+    backup::after_change(&app)?;
+    load_note_image(&conn, name.trim())
 }
 
 #[tauri::command]
@@ -744,7 +778,7 @@ fn set_note_categories(
     app: tauri::AppHandle,
     name: String,
     categories: Vec<String>,
-) -> Result<(), String> {
+) -> Result<NoteImage, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("Note name is required".into());
@@ -770,7 +804,8 @@ fn set_note_categories(
     if changed == 0 {
         return Err("Note not found".into());
     }
-    backup::after_change(&app)
+    backup::after_change(&app)?;
+    load_note_image(&conn, name)
 }
 
 #[tauri::command]

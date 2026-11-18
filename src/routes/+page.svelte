@@ -322,6 +322,84 @@
     entries = await backend.listFragrances();
     noteImages = await backend.listNoteImages();
   }
+  function replaceNoteLocally(updated: NoteImage, previousName = updated.name) {
+    const key = previousName.toLocaleLowerCase();
+    const index = noteImages.findIndex((note) => note.name.toLocaleLowerCase() === key);
+    noteImages = index < 0
+      ? [...noteImages, updated]
+      : noteImages.map((note, noteIndex) => noteIndex === index ? updated : note);
+  }
+  function noteNamesFor(item?: Fragrance) {
+    const names = new Map<string, string>();
+    if (!item) return names;
+    for (const name of [...item.topNotes, ...item.heartNotes, ...item.baseNotes]) {
+      const trimmed = name.trim();
+      if (trimmed) names.set(trimmed.toLocaleLowerCase(), trimmed);
+    }
+    return names;
+  }
+  function updateFragranceLocally(previous: Fragrance | undefined, updated: Fragrance | undefined) {
+    if (updated) {
+      const index = entries.findIndex((item) => item.id === updated.id);
+      entries = index < 0
+        ? [updated, ...entries]
+        : entries.map((item, itemIndex) => itemIndex === index ? updated : item);
+    } else if (previous?.id !== undefined) {
+      entries = entries.filter((item) => item.id !== previous.id);
+    }
+
+    const before = noteNamesFor(previous);
+    const after = noteNamesFor(updated);
+    const deltas = new Map<string, number>();
+    for (const key of before.keys()) if (!after.has(key)) deltas.set(key, -1);
+    for (const key of after.keys()) if (!before.has(key)) deltas.set(key, 1);
+    if (!deltas.size) return;
+
+    const existing = new Set(noteImages.map((note) => note.name.toLocaleLowerCase()));
+    noteImages = noteImages.map((note) => {
+      const delta = deltas.get(note.name.toLocaleLowerCase());
+      return delta ? { ...note, usageCount: Math.max(0, note.usageCount + delta) } : note;
+    });
+    for (const [key, delta] of deltas) {
+      if (delta > 0 && !existing.has(key)) {
+        noteImages = [...noteImages, { name: after.get(key)!, imageUrl: '', parfumoUrl: '', categories: [], usageCount: delta }];
+      }
+    }
+  }
+  function rewriteNoteInFragrances(oldName: string, newName?: string) {
+    const key = oldName.toLocaleLowerCase();
+    const rewriteLayer = (layer: string[]) => newName
+      ? layer.map((note) => note.toLocaleLowerCase() === key ? newName : note)
+      : layer.filter((note) => note.toLocaleLowerCase() !== key);
+    entries = entries.map((item) => {
+      const isAffected = [...item.topNotes, ...item.heartNotes, ...item.baseNotes]
+        .some((note) => note.toLocaleLowerCase() === key);
+      return isAffected ? {
+        ...item,
+        topNotes: rewriteLayer(item.topNotes),
+        heartNotes: rewriteLayer(item.heartNotes),
+        baseNotes: rewriteLayer(item.baseNotes)
+      } : item;
+    });
+  }
+  function normalizedFragrance(item: Fragrance, id: number) {
+    const normalizeNotes = (notes: string[]) => notes.map((note) => note.trim()).filter(Boolean);
+    return {
+      ...item,
+      id,
+      collection: item.collection.trim(),
+      name: item.name.trim(),
+      brand: item.brand.trim(),
+      concentration: item.concentration.trim(),
+      description: item.description.trim(),
+      topNotes: normalizeNotes(item.topNotes),
+      heartNotes: normalizeNotes(item.heartNotes),
+      baseNotes: normalizeNotes(item.baseNotes),
+      perfumer: item.perfumer.trim(),
+      imageUrl: item.imageUrl.trim(),
+      ratings: { ...item.ratings }
+    };
+  }
   async function chooseBackupFolder() {
     choosingBackupFolder = true;
     try {
@@ -414,8 +492,8 @@
     if (savingParfumoNote) return;
     error = ''; success = '';
     try {
-      await backend.createNote(newNoteName);
-      noteImages = await backend.listNoteImages();
+      const created = await backend.createNote(newNoteName);
+      replaceNoteLocally(created);
       success = `${newNoteName.trim()} added to your notes.`;
       newNoteName = '';
     } catch (e) { error = String(e); }
@@ -444,8 +522,8 @@
     if (savingParfumoNote) return;
     error = ''; success = ''; savingParfumoNote = true; parfumoResultsOpen = false; highlightedParfumoIndex = -1;
     try {
-      await backend.saveParfumoNote(note);
-      noteImages = await backend.listNoteImages();
+      const saved = await backend.saveParfumoNote(note);
+      replaceNoteLocally(saved);
       newNoteName = '';
       success = `${note.name} saved from Parfumo.`;
     } catch (e) { error = String(e); }
@@ -454,9 +532,10 @@
   async function renameNote(oldName: string) {
     error = ''; success = '';
     try {
-      await backend.renameNote(oldName, editedNoteName);
-      await refreshNotesAndFragrances();
-      success = `${oldName} renamed to ${editedNoteName.trim()}.`;
+      const renamed = await backend.renameNote(oldName, editedNoteName);
+      replaceNoteLocally(renamed, oldName);
+      rewriteNoteInFragrances(oldName, renamed.name);
+      success = `${oldName} renamed to ${renamed.name}.`;
       editingNote = ''; editedNoteName = '';
     } catch (e) { error = String(e); }
   }
@@ -465,7 +544,8 @@
     error = ''; success = '';
     try {
       await backend.deleteNote(name);
-      await refreshNotesAndFragrances();
+      noteImages = noteImages.filter((note) => note.name.toLocaleLowerCase() !== name.toLocaleLowerCase());
+      rewriteNoteInFragrances(name);
       success = `${name} deleted from your notes and fragrances.`;
     } catch (e) { error = String(e); }
   }
@@ -484,8 +564,8 @@
     error = ''; success = '';
     savingNoteImage = note;
     try {
-      await backend.setNoteImage(note, imageUrl);
-      noteImages = await backend.listNoteImages();
+      const updated = await backend.setNoteImage(note, imageUrl);
+      replaceNoteLocally(updated);
       noteImageDrafts[note] = '';
       success = `Image link saved for ${note}.`;
     } catch (e) { error = String(e); }
@@ -494,8 +574,8 @@
   async function removeNoteImage(note: string) {
     error = ''; success = '';
     try {
-      await backend.removeNoteImage(note);
-      noteImages = await backend.listNoteImages();
+      const updated = await backend.removeNoteImage(note);
+      replaceNoteLocally(updated);
       success = `Image removed from ${note}.`;
     } catch (e) { error = String(e); }
   }
@@ -503,8 +583,8 @@
     error = ''; success = '';
     try {
       const categories = noteCategoryDraft.split(',').map((category) => category.trim()).filter(Boolean);
-      await backend.setNoteCategories(note, categories);
-      noteImages = await backend.listNoteImages();
+      const updated = await backend.setNoteCategories(note, categories);
+      replaceNoteLocally(updated);
       editingNoteCategories = '';
       success = `Categories saved for ${note}.`;
     } catch (e) { error = String(e); }
@@ -675,7 +755,7 @@
     error = ''; success = '';
     try {
       await backend.deleteFragrance(item.id);
-      await refreshNotesAndFragrances();
+      updateFragranceLocally(item, undefined);
       success = `${item.name} was deleted.`;
     } catch (e) { error = String(e); }
   }
@@ -688,10 +768,12 @@
     saving = true;
     try {
       fragrance.bottleRating = overallRating(fragrance.ratings) ?? fragrance.bottleRating;
-      if (fragrance.id === undefined) await backend.saveFragrance(fragrance);
-      else await backend.updateFragrance(fragrance);
-      await refreshNotesAndFragrances();
       const wasEditing = fragrance.id !== undefined;
+      const previous = wasEditing ? entries.find((item) => item.id === fragrance.id) : undefined;
+      const id = fragrance.id === undefined
+        ? await backend.saveFragrance(fragrance)
+        : (await backend.updateFragrance(fragrance), fragrance.id);
+      updateFragranceLocally(previous, normalizedFragrance(fragrance, id));
       const savedShelf = fragrance.shelf; fragrance = blank(); activeShelf = savedShelf; noteInputs = { topNotes: '', heartNotes: '', baseNotes: '' };
       step = 0; view = 'library'; success = wasEditing ? 'Fragrance updated.' : 'Fragrance saved to your collection.';
     } catch (e) { error = String(e); }
