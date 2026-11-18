@@ -69,6 +69,8 @@
   let search = $state('');
   let collectionFilter = $state<'All' | 'Owned' | 'Wishlist' | 'Empties'>('All');
   let collectionLayout = $state<'grid' | 'list'>('grid');
+  let fragrancePage = $state(1);
+  let notePage = $state(1);
   let openCardMenuId = $state<number | null>(null);
   let noteInputs = $state({ topNotes: '', heartNotes: '', baseNotes: '' });
   type NoteLayer = 'topNotes' | 'heartNotes' | 'baseNotes';
@@ -98,6 +100,7 @@
   let installingUpdate = $state(false);
   let canInstallUpdate = $state(true);
   const steps = ['General information', 'Fragrance pyramid', 'Additional details'];
+  const LIST_PAGE_SIZE = 12;
   const concentrations = ['Eau Fraîche', 'Eau de Cologne', 'Eau de Toilette', 'Eau de Parfum', 'Parfum', 'Extrait de Parfum', 'Fragrance Oil'];
   const categories = [
     { value: 'Women', icon: '/female.svg', label: 'Women' },
@@ -127,6 +130,24 @@
   const visibleNotes = $derived(allNotes.filter((note) => note.toLocaleLowerCase().includes(noteSearch.toLocaleLowerCase())));
   const selectedFragrance = $derived(entries.find((item) => item.id === selectedId));
   const visibleEntries = $derived(entries.filter((item) => (activeShelf === 'Collection' ? (collectionFilter === 'All' || (collectionFilter === 'Owned' ? item.shelf === 'Collection' : item.shelf === collectionFilter)) : item.shelf === activeShelf) && `${item.name} ${item.brand} ${item.collection}`.toLowerCase().includes(search.toLowerCase())));
+  const fragrancePageCount = $derived(Math.max(1, Math.ceil(visibleEntries.length / LIST_PAGE_SIZE)));
+  const notePageCount = $derived(Math.max(1, Math.ceil(visibleNotes.length / LIST_PAGE_SIZE)));
+  const currentFragrancePage = $derived(Math.min(fragrancePage, fragrancePageCount));
+  const currentNotePage = $derived(Math.min(notePage, notePageCount));
+  const pagedEntries = $derived(visibleEntries.slice((currentFragrancePage - 1) * LIST_PAGE_SIZE, currentFragrancePage * LIST_PAGE_SIZE));
+  const pagedNotes = $derived(visibleNotes.slice((currentNotePage - 1) * LIST_PAGE_SIZE, currentNotePage * LIST_PAGE_SIZE));
+
+  $effect(() => {
+    search;
+    activeShelf;
+    collectionFilter;
+    fragrancePage = 1;
+  });
+
+  $effect(() => {
+    noteSearch;
+    notePage = 1;
+  });
 
   $effect(() => {
     const tasks = $activeBackendTasks;
@@ -856,7 +877,7 @@
           <div class="empty-state"><div><NavIcon name="notes" size={48} /></div><h2>{allNotes.length === 0 ? 'No notes in your collection yet' : 'No notes found'}</h2><p>{allNotes.length === 0 ? 'Add a note above, or add notes to a fragrance.' : 'Try another search term.'}</p>{#if allNotes.length === 0}<button class="primary-button" onclick={startNew}>Add a fragrance</button>{/if}</div>
         {:else}
           <div class="notes-grid">
-            {#each visibleNotes as note (note)}
+            {#each pagedNotes as note (note)}
               {@const noteInfo = noteImagesByName.get(note.toLocaleLowerCase())}
               <article class="note-card">
                 <div class="note-art">{#if noteInfo?.imageUrl}<img src={noteInfo.imageUrl} alt={note} loading="lazy" decoding="async" />{:else}<NavIcon name="notes" size={48} />{/if}</div>
@@ -881,6 +902,16 @@
               </article>
             {/each}
           </div>
+          {#if notePageCount > 1}
+            <nav class="pagination" aria-label="Perfume notes pagination">
+              <span>Showing {(currentNotePage - 1) * LIST_PAGE_SIZE + 1}–{Math.min(currentNotePage * LIST_PAGE_SIZE, visibleNotes.length)} of {visibleNotes.length}</span>
+              <div>
+                <button type="button" disabled={currentNotePage === 1} onclick={() => notePage = currentNotePage - 1}>Previous</button>
+                <span aria-live="polite">Page {currentNotePage} of {notePageCount}</span>
+                <button type="button" disabled={currentNotePage === notePageCount} onclick={() => notePage = currentNotePage + 1}>Next</button>
+              </div>
+            </nav>
+          {/if}
         {/if}
       </div>
     {:else if view === 'settings'}
@@ -926,7 +957,19 @@
         <div class="collection-controls"><div class="collection-search"><label class="search-box"><NavIcon name="search" size={18} /><input aria-label="Search fragrances" placeholder="Search fragrances or brands..." bind:value={search} /></label><button class="filter-button" type="button" aria-label={collectionFilter === 'Owned' ? 'Show all fragrances' : 'Show owned fragrances'} title={collectionFilter === 'Owned' ? 'Show all fragrances' : 'Show owned fragrances'} onclick={() => collectionFilter = collectionFilter === 'Owned' ? 'All' : 'Owned'}><NavIcon name="filter" size={18} /><span>Filters</span></button></div><div class="csv-actions">{#if webdavBackup}<button class="back-button" type="button" disabled={webdavSyncing} onclick={syncFromWebdav}><NavIcon name="refresh" size={18} /><span>{webdavSyncing ? 'Syncing…' : 'Sync from WebDAV'}</span></button>{/if}<button class="back-button" disabled={csvBusy} onclick={() => fragranceCsvInput?.click()}><NavIcon name="import" size={18} /><span>Import CSV</span></button><button class="back-button" disabled={csvBusy} onclick={() => exportCsv('fragrances')}><NavIcon name="export" size={18} /><span>Export CSV</span></button><button class="primary-button" onclick={startNew}><NavIcon name="add" size={18} /><span>Add fragrance</span></button><input type="file" accept=".csv,.xlsx,.xls,text/csv" bind:this={fragranceCsvInput} onchange={(event) => importCsv(event, 'fragrances')} hidden /></div></div>
         <div class="collection-subbar"><div class="shelf-filters">{#if activeShelf === 'Collection'}{#each ['All', 'Owned', 'Wishlist', 'Empties'] as filter}<button type="button" class:active={collectionFilter === filter} onclick={() => collectionFilter = filter as typeof collectionFilter}><NavIcon name={filter === 'All' ? 'grid' : filter === 'Owned' ? 'library' : filter === 'Wishlist' ? 'wishlist' : 'empties'} size={18} /><span>{filter}</span><span class="filter-count">{filter === 'All' ? entries.length : filter === 'Owned' ? entries.filter((item) => item.shelf === 'Collection').length : entries.filter((item) => item.shelf === filter).length}</span></button>{/each}{/if}</div><div class="collection-view"><span>{visibleEntries.length} {visibleEntries.length === 1 ? 'fragrance' : 'fragrances'}</span><div class="layout-switch"><button type="button" class:active={collectionLayout === 'grid'} aria-label="Grid view" onclick={() => collectionLayout = 'grid'}><NavIcon name="grid" size={18} /></button><button type="button" class:active={collectionLayout === 'list'} aria-label="List view" onclick={() => collectionLayout = 'list'}><NavIcon name="list" size={18} /></button></div></div></div>
         {#if visibleEntries.length === 0}<div class="empty-state"><div><NavIcon name="bottle" size={48} /></div><h2>{entries.length === 0 ? 'Your collection is waiting' : 'No fragrances found'}</h2><p>{entries.length === 0 ? 'Add your first fragrance to start your scent journal.' : 'Try another search or filter.'}</p>{#if entries.length === 0}<button class="primary-button" onclick={startNew}>Add your first fragrance <NavIcon name="forward" size={18} /></button>{/if}</div>
-        {:else}<div class="fragrance-grid" class:list-layout={collectionLayout === 'list'}>{#each visibleEntries as item}<article class="fragrance-card" role="link" tabindex="0" aria-label={`View details for ${item.name}`} onclick={() => openDetail(item)} onkeydown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDetail(item); } }}><div class="fragrance-art">{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<NavIcon name="bottle" size={72} />{/if}<div class="card-menu-wrap"><button class="card-menu" type="button" aria-label={`Actions for ${item.name}`} aria-expanded={openCardMenuId === item.id} onclick={(event) => { event.stopPropagation(); openCardMenuId = openCardMenuId === item.id ? null : (item.id ?? null); }}>···</button>{#if openCardMenuId === item.id}<div class="card-dropdown" role="menu" aria-label={`Actions for ${item.name}`} onclick={(event) => event.stopPropagation()}><button type="button" role="menuitem" onclick={() => { openCardMenuId = null; startEdit(item); }}><NavIcon name="edit" size={16} /> Edit</button><button type="button" role="menuitem" class="delete-action" onclick={() => { openCardMenuId = null; remove(item); }}><NavIcon name="trash" size={16} /> Delete</button></div>{/if}</div></div><div class="fragrance-info"><h2>{item.name}</h2><div class="listing-meta"><img class="sex-icon" src={sexIconFor(item.audience)} alt={item.audience} title={item.audience} /><span class="concentration-label">{item.concentration || 'Concentration not set'}</span></div></div></article>{/each}</div>{/if}
+        {:else}
+          <div class="fragrance-grid" class:list-layout={collectionLayout === 'list'}>{#each pagedEntries as item}<article class="fragrance-card" role="link" tabindex="0" aria-label={`View details for ${item.name}`} onclick={() => openDetail(item)} onkeydown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDetail(item); } }}><div class="fragrance-art">{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<NavIcon name="bottle" size={72} />{/if}<div class="card-menu-wrap"><button class="card-menu" type="button" aria-label={`Actions for ${item.name}`} aria-expanded={openCardMenuId === item.id} onclick={(event) => { event.stopPropagation(); openCardMenuId = openCardMenuId === item.id ? null : (item.id ?? null); }}>···</button>{#if openCardMenuId === item.id}<div class="card-dropdown" role="menu" aria-label={`Actions for ${item.name}`} onclick={(event) => event.stopPropagation()}><button type="button" role="menuitem" onclick={() => { openCardMenuId = null; startEdit(item); }}><NavIcon name="edit" size={16} /> Edit</button><button type="button" role="menuitem" class="delete-action" onclick={() => { openCardMenuId = null; remove(item); }}><NavIcon name="trash" size={16} /> Delete</button></div>{/if}</div></div><div class="fragrance-info"><h2>{item.name}</h2><div class="listing-meta"><img class="sex-icon" src={sexIconFor(item.audience)} alt={item.audience} title={item.audience} /><span class="concentration-label">{item.concentration || 'Concentration not set'}</span></div></div></article>{/each}</div>
+          {#if fragrancePageCount > 1}
+            <nav class="pagination" aria-label="Fragrance pagination">
+              <span>Showing {(currentFragrancePage - 1) * LIST_PAGE_SIZE + 1}–{Math.min(currentFragrancePage * LIST_PAGE_SIZE, visibleEntries.length)} of {visibleEntries.length}</span>
+              <div>
+                <button type="button" disabled={currentFragrancePage === 1} onclick={() => fragrancePage = currentFragrancePage - 1}>Previous</button>
+                <span aria-live="polite">Page {currentFragrancePage} of {fragrancePageCount}</span>
+                <button type="button" disabled={currentFragrancePage === fragrancePageCount} onclick={() => fragrancePage = currentFragrancePage + 1}>Next</button>
+              </div>
+            </nav>
+          {/if}
+        {/if}
       </div>
     {/if}
   </main>
