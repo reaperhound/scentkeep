@@ -80,6 +80,8 @@
   type CsvKind = 'fragrances' | 'notes';
   let fragranceCsvInput = $state<HTMLInputElement>();
   let noteCsvInput = $state<HTMLInputElement>();
+  let fragranceListElement = $state<HTMLDivElement>();
+  let noteListElement = $state<HTMLDivElement>();
   let csvBusy = $state(false);
   let csvReport = $state<{ kind: CsvKind; result: CsvImportReport } | null>(null);
   let backupFolder = $state<string | null>(null);
@@ -148,6 +150,17 @@
     noteSearch;
     notePage = 1;
   });
+
+  async function changeListingPage(kind: 'fragrances' | 'notes', page: number) {
+    if (kind === 'fragrances') fragrancePage = page;
+    else notePage = page;
+    await tick();
+    const list = kind === 'fragrances' ? fragranceListElement : noteListElement;
+    list?.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'start'
+    });
+  }
 
   $effect(() => {
     const tasks = $activeBackendTasks;
@@ -876,7 +889,7 @@
         {#if visibleNotes.length === 0}
           <div class="empty-state"><div><NavIcon name="notes" size={48} /></div><h2>{allNotes.length === 0 ? 'No notes in your collection yet' : 'No notes found'}</h2><p>{allNotes.length === 0 ? 'Add a note above, or add notes to a fragrance.' : 'Try another search term.'}</p>{#if allNotes.length === 0}<button class="primary-button" onclick={startNew}>Add a fragrance</button>{/if}</div>
         {:else}
-          <div class="notes-grid">
+          <div class="notes-grid" bind:this={noteListElement}>
             {#each pagedNotes as note (note)}
               {@const noteInfo = noteImagesByName.get(note.toLocaleLowerCase())}
               <article class="note-card">
@@ -906,9 +919,9 @@
             <nav class="pagination" aria-label="Perfume notes pagination">
               <span>Showing {(currentNotePage - 1) * LIST_PAGE_SIZE + 1}–{Math.min(currentNotePage * LIST_PAGE_SIZE, visibleNotes.length)} of {visibleNotes.length}</span>
               <div>
-                <button type="button" disabled={currentNotePage === 1} onclick={() => notePage = currentNotePage - 1}>Previous</button>
+                <button type="button" disabled={currentNotePage === 1} onclick={() => changeListingPage('notes', currentNotePage - 1)}>Previous</button>
                 <span aria-live="polite">Page {currentNotePage} of {notePageCount}</span>
-                <button type="button" disabled={currentNotePage === notePageCount} onclick={() => notePage = currentNotePage + 1}>Next</button>
+                <button type="button" disabled={currentNotePage === notePageCount} onclick={() => changeListingPage('notes', currentNotePage + 1)}>Next</button>
               </div>
             </nav>
           {/if}
@@ -958,14 +971,14 @@
         <div class="collection-subbar"><div class="shelf-filters">{#if activeShelf === 'Collection'}{#each ['All', 'Owned', 'Wishlist', 'Empties'] as filter}<button type="button" class:active={collectionFilter === filter} onclick={() => collectionFilter = filter as typeof collectionFilter}><NavIcon name={filter === 'All' ? 'grid' : filter === 'Owned' ? 'library' : filter === 'Wishlist' ? 'wishlist' : 'empties'} size={18} /><span>{filter}</span><span class="filter-count">{filter === 'All' ? entries.length : filter === 'Owned' ? entries.filter((item) => item.shelf === 'Collection').length : entries.filter((item) => item.shelf === filter).length}</span></button>{/each}{/if}</div><div class="collection-view"><span>{visibleEntries.length} {visibleEntries.length === 1 ? 'fragrance' : 'fragrances'}</span><div class="layout-switch"><button type="button" class:active={collectionLayout === 'grid'} aria-label="Grid view" onclick={() => collectionLayout = 'grid'}><NavIcon name="grid" size={18} /></button><button type="button" class:active={collectionLayout === 'list'} aria-label="List view" onclick={() => collectionLayout = 'list'}><NavIcon name="list" size={18} /></button></div></div></div>
         {#if visibleEntries.length === 0}<div class="empty-state"><div><NavIcon name="bottle" size={48} /></div><h2>{entries.length === 0 ? 'Your collection is waiting' : 'No fragrances found'}</h2><p>{entries.length === 0 ? 'Add your first fragrance to start your scent journal.' : 'Try another search or filter.'}</p>{#if entries.length === 0}<button class="primary-button" onclick={startNew}>Add your first fragrance <NavIcon name="forward" size={18} /></button>{/if}</div>
         {:else}
-          <div class="fragrance-grid" class:list-layout={collectionLayout === 'list'}>{#each pagedEntries as item}<article class="fragrance-card" role="link" tabindex="0" aria-label={`View details for ${item.name}`} onclick={() => openDetail(item)} onkeydown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDetail(item); } }}><div class="fragrance-art">{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<NavIcon name="bottle" size={72} />{/if}<div class="card-menu-wrap"><button class="card-menu" type="button" aria-label={`Actions for ${item.name}`} aria-expanded={openCardMenuId === item.id} onclick={(event) => { event.stopPropagation(); openCardMenuId = openCardMenuId === item.id ? null : (item.id ?? null); }}>···</button>{#if openCardMenuId === item.id}<div class="card-dropdown" role="menu" aria-label={`Actions for ${item.name}`} onclick={(event) => event.stopPropagation()}><button type="button" role="menuitem" onclick={() => { openCardMenuId = null; startEdit(item); }}><NavIcon name="edit" size={16} /> Edit</button><button type="button" role="menuitem" class="delete-action" onclick={() => { openCardMenuId = null; remove(item); }}><NavIcon name="trash" size={16} /> Delete</button></div>{/if}</div></div><div class="fragrance-info"><h2>{item.name}</h2><div class="listing-meta"><img class="sex-icon" src={sexIconFor(item.audience)} alt={item.audience} title={item.audience} /><span class="concentration-label">{item.concentration || 'Concentration not set'}</span></div></div></article>{/each}</div>
+          <div class="fragrance-grid" class:list-layout={collectionLayout === 'list'} bind:this={fragranceListElement}>{#each pagedEntries as item}<article class="fragrance-card" role="link" tabindex="0" aria-label={`View details for ${item.name}`} onclick={() => openDetail(item)} onkeydown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDetail(item); } }}><div class="fragrance-art">{#if item.imageUrl}<img src={item.imageUrl} alt={item.name} />{:else}<NavIcon name="bottle" size={72} />{/if}<div class="card-menu-wrap"><button class="card-menu" type="button" aria-label={`Actions for ${item.name}`} aria-expanded={openCardMenuId === item.id} onclick={(event) => { event.stopPropagation(); openCardMenuId = openCardMenuId === item.id ? null : (item.id ?? null); }}>···</button>{#if openCardMenuId === item.id}<div class="card-dropdown" role="menu" aria-label={`Actions for ${item.name}`} onclick={(event) => event.stopPropagation()}><button type="button" role="menuitem" onclick={() => { openCardMenuId = null; startEdit(item); }}><NavIcon name="edit" size={16} /> Edit</button><button type="button" role="menuitem" class="delete-action" onclick={() => { openCardMenuId = null; remove(item); }}><NavIcon name="trash" size={16} /> Delete</button></div>{/if}</div></div><div class="fragrance-info"><h2>{item.name}</h2><div class="listing-meta"><img class="sex-icon" src={sexIconFor(item.audience)} alt={item.audience} title={item.audience} /><span class="concentration-label">{item.concentration || 'Concentration not set'}</span></div></div></article>{/each}</div>
           {#if fragrancePageCount > 1}
             <nav class="pagination" aria-label="Fragrance pagination">
               <span>Showing {(currentFragrancePage - 1) * LIST_PAGE_SIZE + 1}–{Math.min(currentFragrancePage * LIST_PAGE_SIZE, visibleEntries.length)} of {visibleEntries.length}</span>
               <div>
-                <button type="button" disabled={currentFragrancePage === 1} onclick={() => fragrancePage = currentFragrancePage - 1}>Previous</button>
+                <button type="button" disabled={currentFragrancePage === 1} onclick={() => changeListingPage('fragrances', currentFragrancePage - 1)}>Previous</button>
                 <span aria-live="polite">Page {currentFragrancePage} of {fragrancePageCount}</span>
-                <button type="button" disabled={currentFragrancePage === fragrancePageCount} onclick={() => fragrancePage = currentFragrancePage + 1}>Next</button>
+                <button type="button" disabled={currentFragrancePage === fragrancePageCount} onclick={() => changeListingPage('fragrances', currentFragrancePage + 1)}>Next</button>
               </div>
             </nav>
           {/if}
