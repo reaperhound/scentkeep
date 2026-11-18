@@ -351,7 +351,11 @@ fn ensure_unique_fragrance(
 }
 
 #[tauri::command]
-fn save_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<i64, String> {
+fn save_fragrance(
+    app: tauri::AppHandle,
+    fragrance: Fragrance,
+    parfumo_notes: Option<Vec<parfumo::ParfumoNote>>,
+) -> Result<i64, String> {
     validate_fragrance(&fragrance)?;
     let mut conn = database(&app)?;
     let transaction = conn
@@ -359,6 +363,15 @@ fn save_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<i64, St
         .map_err(|e| e.to_string())?;
     ensure_unique_fragrance(&transaction, &fragrance, None)?;
     let id = insert_fragrance(&transaction, &fragrance)?;
+    parfumo::save_fragrance_notes(
+        &transaction,
+        [
+            &fragrance.top_notes,
+            &fragrance.heart_notes,
+            &fragrance.base_notes,
+        ],
+        &parfumo_notes.unwrap_or_default(),
+    )?;
     transaction.commit().map_err(|e| e.to_string())?;
     backup::after_change(&app)?;
     Ok(id)
@@ -388,7 +401,11 @@ fn insert_fragrance(conn: &Connection, fragrance: &Fragrance) -> Result<i64, Str
 }
 
 #[tauri::command]
-fn update_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<(), String> {
+fn update_fragrance(
+    app: tauri::AppHandle,
+    fragrance: Fragrance,
+    parfumo_notes: Option<Vec<parfumo::ParfumoNote>>,
+) -> Result<(), String> {
     validate_fragrance(&fragrance)?;
     let id = fragrance.id.ok_or("Missing fragrance ID")?;
     let mut conn = database(&app)?;
@@ -415,6 +432,15 @@ fn update_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<(), S
             &fragrance.heart_notes,
             &fragrance.base_notes,
         ],
+    )?;
+    parfumo::save_fragrance_notes(
+        &transaction,
+        [
+            &fragrance.top_notes,
+            &fragrance.heart_notes,
+            &fragrance.base_notes,
+        ],
+        &parfumo_notes.unwrap_or_default(),
     )?;
     transaction.commit().map_err(|e| e.to_string())?;
     backup::after_change(&app)
@@ -863,6 +889,8 @@ pub fn run() {
             parfumo::reset_parfumo_browser,
             parfumo::disconnect_parfumo,
             parfumo::search_parfumo_notes,
+            parfumo::search_parfumo_fragrances,
+            parfumo::import_parfumo_fragrance,
             parfumo::save_parfumo_note,
             parfumo::refresh_parfumo_note_metadata
         ])

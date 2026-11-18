@@ -64,6 +64,8 @@ export type Fragrance = {
 export type NoteImage = { name: string; imageUrl: string; parfumoUrl: string; categories: string[]; usageCount: number };
 export type AccordBar = { key: string; label: string; score: number; relativeStrength: number; contributingNotes: string[] };
 export type ParfumoNote = { name: string; imageUrl: string; parfumoUrl: string; categories?: string[] };
+export type ParfumoFragranceResult = { name: string; url: string; imageUrl: string };
+export type ParfumoFragranceDraft = Pick<Fragrance, 'name' | 'brand' | 'audience' | 'concentration' | 'perfumer' | 'description' | 'imageUrl' | 'topNotes' | 'heartNotes' | 'baseNotes'> & { year: number | null; notes: ParfumoNote[]; sourceUrl: string; warnings: string[] };
 export type CsvImportReport = { imported: number; duplicates: string[] };
 export type ParfumoStatus = { connected: boolean; cookieCount: number };
 export type WebdavBackup = { url: string; username: string; needsSync: boolean };
@@ -73,11 +75,13 @@ export type BackupStatus = { state: 'idle' | 'queued' | 'running' | 'error'; err
 export const backend = {
   listFragrances: () => invoke<Fragrance[]>('list_fragrances'),
   getFragranceAccords: (fragranceId: number) => invoke<AccordBar[]>('get_fragrance_accords', { fragranceId }),
-  saveFragrance: (fragrance: Fragrance) => invoke<number>('save_fragrance', { fragrance }),
-  updateFragrance: (fragrance: Fragrance) => invoke<void>('update_fragrance', { fragrance }),
+  saveFragrance: (fragrance: Fragrance, parfumoNotes: ParfumoNote[] = []) => invoke<number>('save_fragrance', { fragrance, parfumoNotes }),
+  updateFragrance: (fragrance: Fragrance, parfumoNotes: ParfumoNote[] = []) => invoke<void>('update_fragrance', { fragrance, parfumoNotes }),
   deleteFragrance: (id: number) => invoke<void>('delete_fragrance', { id }),
   listNoteImages: () => invoke<NoteImage[]>('list_note_images'),
   createNote: (name: string) => invoke<NoteImage>('create_note', { name }),
+  searchParfumoFragrances: (query: string) => invoke<ParfumoFragranceResult[]>('search_parfumo_fragrances', { query }),
+  importParfumoFragrance: (url: string) => invoke<ParfumoFragranceDraft>('import_parfumo_fragrance', { url }),
   searchParfumoNotes: (query: string) => invoke<ParfumoNote[]>('search_parfumo_notes', { query }),
   saveParfumoNote: (note: ParfumoNote) => invoke<NoteImage>('save_parfumo_note', { note }),
   refreshParfumoNoteMetadata: () => invoke<number>('refresh_parfumo_note_metadata'),

@@ -315,6 +315,21 @@ async fn search_notes_in_webview(
     app: tauri::AppHandle,
     query: String,
 ) -> Result<Vec<ParfumoNote>, String> {
+    let body = fetch_in_webview(
+        app,
+        "/action/livesearch/livesearch_note.php".into(),
+        Some(query),
+    )
+    .await?;
+    Ok(parse_notes(&body))
+}
+
+#[cfg(target_os = "linux")]
+async fn fetch_in_webview(
+    app: tauri::AppHandle,
+    path: String,
+    query: Option<String>,
+) -> Result<String, String> {
     use tauri::webview::PageLoadEvent;
     let mut ready = None;
     let window = if let Some(window) = app.get_webview_window(LOGIN_WINDOW) {
@@ -365,6 +380,7 @@ async fn search_notes_in_webview(
         );
     }
     let query_js = serde_json::to_string(&query).map_err(|e| e.to_string())?;
+    let path_js = serde_json::to_string(&path).map_err(|e| e.to_string())?;
     let search_id = NOTE_SEARCH_ID.fetch_add(1, Ordering::Relaxed);
     let script = format!(
         r#"(() => {{
@@ -375,10 +391,10 @@ async fn search_notes_in_webview(
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 12000);
             try {{
-                const response = await fetch('/action/livesearch/livesearch_note.php', {{
-                    method: 'POST',
+                const response = await fetch({path_js}, {{
+                    method: {query_js} === null ? 'GET' : 'POST',
                     headers: {{ 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }},
-                    body: new URLSearchParams({{ q: {query_js}, csrf_key: '' }}),
+                    body: {query_js} === null ? undefined : new URLSearchParams({{ q: {query_js}, csrf_key: '' }}),
                     credentials: 'same-origin',
                     signal: controller.signal
                 }});
@@ -415,7 +431,9 @@ async fn search_notes_in_webview(
             let _ = window.show();
             let _ = window.set_focus();
         }
-        return Err("Parfumo opened for a browser check. Complete it there, then try the note search again.".into());
+        return Err(
+            "Parfumo opened for a browser check. Complete it there, then try again.".into(),
+        );
     }
     if status != 200 {
         return Err(format!("Parfumo search returned HTTP {status}."));
@@ -424,7 +442,8 @@ async fn search_notes_in_webview(
         .get("body")
         .and_then(|value| value.as_str())
         .unwrap_or_default();
-    Ok(parse_notes(body))
+    check_fragrance_response(body)?;
+    Ok(body.to_owned())
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -638,47 +657,104 @@ pub(crate) async fn save_parfumo_note(
     app: tauri::AppHandle,
     mut note: ParfumoNote,
 ) -> Result<crate::NoteImage, String> {
+    if note.name.trim().is_empty() || note.name.trim().chars().count() > 200 {
+        return Err("Choose a valid note".into());
+    }
+    let _ = populate_note_categories(&app, std::slice::from_mut(&mut note)).await;
+    let mut conn = crate::database(&app)?;
+    let transaction = conn.transaction().map_err(|e| e.to_string())?;
+    store_parfumo_note(&transaction, &note, true)?;
+    transaction.commit().map_err(|e| e.to_string())?;
+    crate::backup::after_change(&app)?;
+    crate::load_note_image(&conn, note.name.trim())
+}
+
+async fn populate_note_categories(
+    app: &tauri::AppHandle,
+    notes: &mut [ParfumoNote],
+) -> Result<(), String> {
+    let requests: Vec<_> = notes
+        .iter()
+        .filter_map(|note| {
+            let url = parfumo_link(&note.parfumo_url);
+            (note.categories.is_empty() && !url.is_empty()).then(|| (note.name.clone(), url))
+        })
+        .collect();
+    if requests.is_empty() {
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    let window = app
+        .get_webview_window(LOGIN_WINDOW)
+        .ok_or("Parfumo browser is unavailable")?;
+    #[cfg(not(target_os = "linux"))]
+    let _ = app;
+    let found = tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "linux")]
+        let categories = categories_in_webview(&window, &requests)?;
+        #[cfg(not(target_os = "linux"))]
+        let categories = categories_with_session(&requests)?;
+        Ok::<_, String>(requests.into_iter().zip(categories).collect::<Vec<_>>())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    for ((name, _), categories) in found {
+        if let Some(note) = notes.iter_mut().find(|note| note.name == name) {
+            note.categories = clean_categories(&note.name, categories);
+        }
+    }
+    Ok(())
+}
+
+fn store_parfumo_note(
+    conn: &rusqlite::Connection,
+    note: &ParfumoNote,
+    overwrite_existing: bool,
+) -> Result<(), String> {
     let name = note.name.trim();
     if name.is_empty() || name.chars().count() > 200 {
         return Err("Choose a valid note".into());
     }
-    let image_url = if note.image_url.is_empty() {
-        String::new()
-    } else {
-        image_link(&note.image_url)
-    };
-    let parfumo_url = if note.parfumo_url.is_empty() {
-        String::new()
-    } else {
-        parfumo_link(&note.parfumo_url)
-    };
-    if note.categories.is_empty() && !parfumo_url.is_empty() {
-        let request = vec![(name.to_owned(), parfumo_url.clone())];
-        #[cfg(target_os = "linux")]
-        if let Some(window) = app.get_webview_window(LOGIN_WINDOW) {
-            note.categories = categories_in_webview(&window, &request)
-                .unwrap_or_default()
-                .into_iter()
-                .next()
-                .unwrap_or_default();
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            note.categories = categories_with_session(&request)
-                .unwrap_or_default()
-                .into_iter()
-                .next()
-                .unwrap_or_default();
+    let image_url = image_link(&note.image_url);
+    let parfumo_url = parfumo_link(&note.parfumo_url);
+    if (!note.image_url.trim().is_empty() && image_url.is_empty())
+        || (!note.parfumo_url.trim().is_empty() && parfumo_url.is_empty())
+    {
+        return Err(format!(
+            "Invalid Parfumo image or source link for note {name}."
+        ));
+    }
+    let categories = serde_json::to_string(&clean_categories(name, note.categories.clone()))
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO note_images (name, image_data_url, parfumo_url, categories)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(name) DO UPDATE SET
+           image_data_url = CASE WHEN excluded.image_data_url != '' AND (?5 OR note_images.image_data_url = '') THEN excluded.image_data_url ELSE note_images.image_data_url END,
+           parfumo_url = CASE WHEN excluded.parfumo_url != '' AND (?5 OR note_images.parfumo_url = '') THEN excluded.parfumo_url ELSE note_images.parfumo_url END,
+           categories = CASE WHEN excluded.categories != '[]' AND (?5 OR note_images.categories = '[]') THEN excluded.categories ELSE note_images.categories END",
+        rusqlite::params![name, image_url, parfumo_url, categories, overwrite_existing],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn save_fragrance_notes(
+    conn: &rusqlite::Connection,
+    layers: [&[String]; 3],
+    imported_notes: &[ParfumoNote],
+) -> Result<(), String> {
+    let names: std::collections::HashSet<_> = layers
+        .into_iter()
+        .flatten()
+        .map(|name| name.trim().to_lowercase())
+        .collect();
+    for note in imported_notes {
+        // A user can remove an imported note before saving the fragrance.
+        if names.contains(&note.name.trim().to_lowercase()) {
+            store_parfumo_note(conn, note, false)?;
         }
     }
-    note.categories = clean_categories(name, note.categories);
-    let categories = serde_json::to_string(&note.categories).map_err(|e| e.to_string())?;
-    let mut conn = crate::database(&app)?;
-    let transaction = conn.transaction().map_err(|e| e.to_string())?;
-    transaction.execute("INSERT INTO note_images (name, image_data_url, parfumo_url, categories) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(name) DO UPDATE SET image_data_url = CASE WHEN excluded.image_data_url = '' THEN note_images.image_data_url ELSE excluded.image_data_url END, parfumo_url = CASE WHEN excluded.parfumo_url = '' THEN note_images.parfumo_url ELSE excluded.parfumo_url END, categories = CASE WHEN excluded.categories = '[]' THEN note_images.categories ELSE excluded.categories END", rusqlite::params![name, image_url, parfumo_url, categories]).map_err(|e| e.to_string())?;
-    transaction.commit().map_err(|e| e.to_string())?;
-    crate::backup::after_change(&app)?;
-    crate::load_note_image(&conn, name)
+    Ok(())
 }
 
 #[tauri::command]
@@ -1074,4 +1150,840 @@ pub(crate) async fn disconnect_parfumo(app: tauri::AppHandle) -> Result<(), Stri
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ParfumoFragranceResult {
+    name: String,
+    url: String,
+    image_url: String,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ParfumoFragranceDraft {
+    name: String,
+    brand: String,
+    year: Option<i32>,
+    audience: String,
+    concentration: String,
+    perfumer: String,
+    description: String,
+    image_url: String,
+    top_notes: Vec<String>,
+    heart_notes: Vec<String>,
+    base_notes: Vec<String>,
+    notes: Vec<ParfumoNote>,
+    source_url: String,
+    warnings: Vec<String>,
+}
+
+fn check_fragrance_response(body: &str) -> Result<(), String> {
+    if body.contains("challenges.cloudflare.com") || body.contains("Just a moment...") {
+        return Err("Parfumo requires a browser check. Open Parfumo in Settings, complete the check and save the session, then try again.".into());
+    }
+    Ok(())
+}
+
+fn fragrance_url(value: &str) -> Result<String, String> {
+    let link = parfumo_link(value);
+    let url = Url::parse(&link).map_err(|_| "Choose a valid Parfumo fragrance link.")?;
+    let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
+    if parts.len() != 3 || parts[0] != "Perfumes" || parts[1].is_empty() || parts[2].is_empty() {
+        return Err("Choose a fragrance page on parfumo.com/Perfumes/Brand/Fragrance.".into());
+    }
+    // Always use the same origin as the embedded browser.
+    Ok(format!("https://www.parfumo.com{}", url.path()))
+}
+
+async fn fetch_fragrance_page(app: tauri::AppHandle, url: String) -> Result<String, String> {
+    if load_session()?.is_none() {
+        return Err("Connect Parfumo in Settings before searching fragrances.".into());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let parsed = Url::parse(&url).map_err(|e| e.to_string())?;
+        let path = format!(
+            "{}{}",
+            parsed.path(),
+            parsed.query().map(|q| format!("?{q}")).unwrap_or_default()
+        );
+        fetch_in_webview(app, path, None).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        tauri::async_runtime::spawn_blocking(move || {
+            let session = load_session()?.ok_or("Connect Parfumo in Settings first.")?;
+            let cookies = session
+                .cookies
+                .iter()
+                .filter(|cookie| {
+                    cookie.domain.as_deref().is_none_or(|domain| {
+                        let domain = domain.trim_start_matches('.');
+                        domain == "parfumo.com" || domain.ends_with(".parfumo.com")
+                    })
+                })
+                .map(|cookie| format!("{}={}", cookie.name, cookie.value))
+                .collect::<Vec<_>>()
+                .join("; ");
+            let client = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|e| e.to_string())?;
+            let response = client
+                .get(url)
+                .header(reqwest::header::COOKIE, cookies)
+                .send()
+                .map_err(|e| format!("Could not reach Parfumo: {e}"))?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "Parfumo returned HTTP {}. Refresh your session in Settings.",
+                    response.status()
+                ));
+            }
+            let body = response.text().map_err(|e| e.to_string())?;
+            check_fragrance_response(&body)?;
+            Ok(body)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+}
+
+fn text_of(element: scraper::ElementRef<'_>) -> String {
+    element
+        .text()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn field(html: &Html, selector: &str) -> String {
+    html.select(&Selector::parse(selector).expect("valid selector"))
+        .find_map(|element| {
+            let value = element
+                .value()
+                .attr("content")
+                .map(str::to_owned)
+                .unwrap_or_else(|| text_of(element));
+            (!value.trim().is_empty()).then(|| value.trim().to_owned())
+        })
+        .unwrap_or_default()
+}
+
+fn parse_fragrance_results(body: &str) -> Result<Vec<ParfumoFragranceResult>, String> {
+    check_fragrance_response(body)?;
+    let html = Html::parse_document(body);
+    let mut seen = std::collections::HashSet::new();
+    let mut results = Vec::new();
+    for link in html.select(&Selector::parse("a[href]").unwrap()) {
+        let Ok(url) = fragrance_url(link.value().attr("href").unwrap_or_default()) else {
+            continue;
+        };
+        let image = link.select(&Selector::parse("img").unwrap()).next();
+        let name = text_of(link);
+        let name = if name.is_empty() {
+            image
+                .and_then(|img| img.value().attr("alt"))
+                .unwrap_or_default()
+                .to_owned()
+        } else {
+            name
+        };
+        if name.is_empty() || !seen.insert(url.clone()) {
+            continue;
+        }
+        let image_url = image
+            .and_then(|img| {
+                img.value()
+                    .attr("data-src")
+                    .or_else(|| img.value().attr("src"))
+            })
+            .map(image_link)
+            .unwrap_or_default();
+        results.push(ParfumoFragranceResult {
+            name,
+            url,
+            image_url,
+        });
+        if results.len() == 30 {
+            break;
+        }
+    }
+    Ok(results)
+}
+
+fn fragrance_note(element: scraper::ElementRef<'_>) -> Option<ParfumoNote> {
+    let href = element.value().attr("href");
+    let parfumo_url = href.map(parfumo_link).unwrap_or_default();
+    if href.is_some() && parfumo_url.is_empty() {
+        return None;
+    }
+    let image_selector = Selector::parse("img").unwrap();
+    let image = element.select(&image_selector).next().or_else(|| {
+        // Some pyramids place the image next to the note link.
+        href?;
+        let parent = element.parent().and_then(scraper::ElementRef::wrap)?;
+        let links = Selector::parse("a[href*='/Fragrance_Note/']").unwrap();
+        (parent.select(&links).count() == 1)
+            .then(|| parent.select(&image_selector).next())
+            .flatten()
+    });
+    let mut name = text_of(element);
+    if name.is_empty() {
+        name = image
+            .and_then(|image| image.value().attr("alt"))
+            .or_else(|| element.value().attr("title"))
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+    }
+    if name.is_empty() {
+        return None;
+    }
+    let image_url = image
+        .and_then(|image| {
+            image
+                .value()
+                .attr("data-src")
+                .or_else(|| image.value().attr("src"))
+        })
+        .map(image_link)
+        .unwrap_or_default();
+    Some(ParfumoNote {
+        name,
+        image_url,
+        parfumo_url,
+        categories: Vec::new(),
+    })
+}
+
+fn apply_note_search_result(note: &mut ParfumoNote, results: Vec<ParfumoNote>) -> bool {
+    let key = |name: &str| {
+        name.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let Some(found) = results
+        .into_iter()
+        .find(|found| key(&found.name) == key(&note.name))
+    else {
+        return false;
+    };
+    let image_url = image_link(&found.image_url);
+    if !image_url.is_empty() {
+        note.image_url = image_url;
+    }
+    let parfumo_url = parfumo_link(&found.parfumo_url);
+    if !parfumo_url.is_empty() {
+        note.parfumo_url = parfumo_url;
+    }
+    if !found.categories.is_empty() {
+        note.categories = clean_categories(&note.name, found.categories);
+    }
+    true
+}
+
+async fn enrich_fragrance_notes(app: tauri::AppHandle, draft: &mut ParfumoFragranceDraft) {
+    let mut unresolved = Vec::new();
+    let mut categories_incomplete = false;
+    // Resolve each unique fragrance-page name through the same search used by
+    // the Notes library. Do not substitute a similar but different note.
+    for batch in draft.notes.chunks_mut(3) {
+        let requests: Vec<_> = batch
+            .iter()
+            .map(|note| {
+                let app = app.clone();
+                let query = note.name.clone();
+                tauri::async_runtime::spawn(async move { search_parfumo_notes(app, query).await })
+            })
+            .collect();
+        for (note, request) in batch.iter_mut().zip(requests) {
+            match request.await {
+                Ok(Ok(results)) => {
+                    if !apply_note_search_result(note, results) {
+                        unresolved.push(note.name.clone());
+                    }
+                }
+                _ => unresolved.push(note.name.clone()),
+            }
+        }
+        if populate_note_categories(&app, batch).await.is_err() {
+            categories_incomplete = true;
+        }
+    }
+    if !unresolved.is_empty() {
+        draft.warnings.push(format!("The Parfumo note search could not resolve: {}. Their names and available details from the fragrance page will still be saved.", unresolved.join(", ")));
+    }
+    if categories_incomplete {
+        draft.warnings.push("Some note categories could not be read from Parfumo. The other note details will still be saved.".into());
+    }
+}
+
+fn parse_fragrance(body: &str, source_url: String) -> Result<ParfumoFragranceDraft, String> {
+    check_fragrance_response(body)?;
+    let html = Html::parse_document(body);
+    let mut draft = ParfumoFragranceDraft {
+        name: field(&html, "h1 [itemprop='name'], h1 .p_name, h1"),
+        brand: field(
+            &html,
+            "[itemprop='brand'], h1 a[href*='/Brands/'], .p_brand a",
+        ),
+        image_url: image_link(&field(&html, "meta[property='og:image']")),
+        description: field(
+            &html,
+            "[itemprop='description'], .p_description, meta[name='description']",
+        ),
+        concentration: field(&html, ".p_concentration"),
+        source_url,
+        ..Default::default()
+    };
+    // Prefer structured product data when available; do not copy community scores
+    // into the user's personal ratings.
+    fn product(value: &serde_json::Value) -> Option<&serde_json::Value> {
+        if value.get("@type").is_some_and(|t| {
+            t.as_str() == Some("Product")
+                || t.as_array()
+                    .is_some_and(|a| a.iter().any(|t| t.as_str() == Some("Product")))
+        }) {
+            return Some(value);
+        }
+        if let Some(items) = value.as_array() {
+            return items.iter().find_map(product);
+        }
+        value.get("@graph").and_then(product)
+    }
+    for script in html.select(&Selector::parse("script[type='application/ld+json']").unwrap()) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&script.inner_html()) {
+            if let Some(p) = product(&value) {
+                if let Some(name) = p.get("name").and_then(|v| v.as_str()) {
+                    draft.name = name.trim().to_owned();
+                }
+                if let Some(brand) = p.get("brand").and_then(|v| {
+                    v.as_str()
+                        .or_else(|| v.get("name").and_then(|n| n.as_str()))
+                }) {
+                    draft.brand = brand.trim().to_owned();
+                }
+                if let Some(image) = p.get("image").and_then(|v| {
+                    v.as_str()
+                        .or_else(|| v.get(0).and_then(|v| v.as_str()))
+                        .or_else(|| v.get("url").and_then(|v| v.as_str()))
+                }) {
+                    draft.image_url = image_link(image);
+                }
+                if let Some(description) = p.get("description").and_then(|v| v.as_str()) {
+                    draft.description = description.to_owned();
+                }
+            }
+        }
+    }
+    let year = field(
+        &html,
+        "[itemprop='releaseDate'], .p_year, a[href*='/Release_Years/']",
+    );
+    draft.year = year
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|s| s.parse::<i32>().ok())
+        .find(|year| (1800..=2100).contains(year));
+    draft.perfumer = html
+        .select(&Selector::parse("a[href*='/Perfumers/']").unwrap())
+        .map(text_of)
+        .filter(|s| !s.is_empty())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let audience = field(&html, "[itemprop='audience'], .p_gender").to_lowercase();
+    draft.audience = match audience.as_str() {
+        "women" | "female" => "Women",
+        "men" | "male" => "Men",
+        "unisex" | "women and men" => "Unisex",
+        _ => "",
+    }
+    .into();
+    let notes_selector =
+        Selector::parse(".pyramid_block .clickable_note_img, a[href*='/Fragrance_Note/']").unwrap();
+    // Find the nearest labelled group containing each note. This handles both
+    // nested pyramid rows and rows with a preceding heading.
+    for note in html.select(&notes_selector) {
+        let Some(imported_note) = fragrance_note(note) else {
+            continue;
+        };
+        let name = &imported_note.name;
+        // Parfumo uses t/m/b for top/heart/base on its clickable note spans.
+        let mut layer = match note.value().attr("data-nt") {
+            Some("t") => Some(0),
+            Some("m") => Some(1),
+            Some("b") => Some(2),
+            _ => None,
+        };
+        for ancestor in note
+            .ancestors()
+            .filter_map(scraper::ElementRef::wrap)
+            .take(5)
+        {
+            if layer.is_some() {
+                break;
+            }
+            let heading = ancestor
+                .select(
+                    &Selector::parse("h2, h3, h4, h5, .pyramid_title, .pyramid_level_label, .pyramid-label, .pyramid-level-label, .pyramid-level, .pyramid_level").unwrap(),
+                )
+                .next()
+                .map(text_of)
+                .or_else(|| {
+                    ancestor
+                        .prev_siblings()
+                        .filter_map(scraper::ElementRef::wrap)
+                        .next()
+                        .map(text_of)
+                })
+                .unwrap_or_default();
+            layer = match heading.trim().to_lowercase().as_str() {
+                "top notes" => Some(0),
+                "heart notes" | "middle notes" => Some(1),
+                "base notes" => Some(2),
+                _ => None,
+            };
+            if layer.is_some() {
+                break;
+            }
+        }
+        let target = match layer {
+            Some(0) => &mut draft.top_notes,
+            Some(1) => &mut draft.heart_notes,
+            Some(2) => &mut draft.base_notes,
+            _ => continue,
+        };
+        if !target.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+            target.push(name.clone());
+        }
+        if let Some(existing) = draft
+            .notes
+            .iter_mut()
+            .find(|note| note.name.eq_ignore_ascii_case(name))
+        {
+            if existing.image_url.is_empty() {
+                existing.image_url = imported_note.image_url;
+            }
+            if existing.parfumo_url.is_empty() {
+                existing.parfumo_url = imported_note.parfumo_url;
+            }
+        } else {
+            draft.notes.push(imported_note);
+        }
+    }
+    if draft.name.is_empty() || draft.brand.is_empty() {
+        return Err("Could not read the fragrance name and brand from this Parfumo page. Its layout may have changed; you can still add it manually.".into());
+    }
+    if draft.year.is_none() {
+        draft
+            .warnings
+            .push("Release year was not available. Enter it before saving.".into());
+    }
+    if draft.top_notes.is_empty() && draft.heart_notes.is_empty() && draft.base_notes.is_empty() {
+        draft
+            .warnings
+            .push("No labelled note pyramid was found. Add the notes manually.".into());
+    }
+    if draft.image_url.is_empty() {
+        draft.warnings.push("No bottle image was found.".into());
+    }
+    Ok(draft)
+}
+
+#[tauri::command]
+pub(crate) async fn search_parfumo_fragrances(
+    app: tauri::AppHandle,
+    query: String,
+) -> Result<Vec<ParfumoFragranceResult>, String> {
+    let query = query.trim();
+    if query.chars().count() < 2 {
+        return Ok(Vec::new());
+    }
+    if query.chars().count() > 100 {
+        return Err("Search term is too long (maximum 100 characters).".into());
+    }
+    let mut url = Url::parse("https://www.parfumo.com/s_perfumes.php").unwrap();
+    url.query_pairs_mut().append_pair("filter", query);
+    parse_fragrance_results(&fetch_fragrance_page(app, url.to_string()).await?)
+}
+
+#[tauri::command]
+pub(crate) async fn import_parfumo_fragrance(
+    app: tauri::AppHandle,
+    url: String,
+) -> Result<ParfumoFragranceDraft, String> {
+    let url = fragrance_url(&url)?;
+    let body = fetch_fragrance_page(app.clone(), url.clone()).await?;
+    let mut draft = parse_fragrance(&body, url)?;
+    enrich_fragrance_notes(app, &mut draft).await;
+    Ok(draft)
+}
+
+#[cfg(test)]
+mod fragrance_tests {
+    use super::*;
+
+    fn note_database() -> rusqlite::Connection {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE fragrances (id INTEGER PRIMARY KEY, top_notes TEXT, heart_notes TEXT, base_notes TEXT);
+             CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL, parfumo_url TEXT NOT NULL DEFAULT '', categories TEXT NOT NULL DEFAULT '[]');",
+        ).unwrap();
+        crate::ensure_fragrance_notes_schema(&mut conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn parses_the_supplied_clickable_pyramid_and_saves_all_ten_notes() {
+        let body = format!(
+            "<h1>Test</h1><span itemprop='brand'>House</span>{}",
+            include_str!("../tests/fixtures/parfumo-pyramid.html")
+        );
+        let mut draft = parse_fragrance(&body, String::new()).unwrap();
+        assert_eq!(
+            draft.top_notes,
+            ["Pineapple", "Granny Smith apple", "Mandarin orange"]
+        );
+        assert_eq!(draft.heart_notes, ["Vanilla", "Cedarwood", "Oakmoss"]);
+        assert_eq!(
+            draft.base_notes,
+            ["Ambergris", "Dry woods", "Musk", "Caramel"]
+        );
+        assert_eq!(draft.notes.len(), 10);
+        assert_eq!(
+            draft.notes[0].image_url,
+            "https://media.parfumo.com/notes_png/21/21_c8b2e7a88752251d10a5ada6a0626047683a6409_1200.png"
+        );
+        assert!(draft.notes.iter().all(|note| note.parfumo_url.is_empty()));
+        assert!(draft.notes.iter().all(|note| {
+            note.image_url
+                .starts_with("https://media.parfumo.com/notes_png/")
+                && !note.image_url.contains('?')
+        }));
+        assert!(
+            !draft
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("note pyramid"))
+        );
+        assert!(apply_note_search_result(
+            &mut draft.notes[0],
+            parse_notes(
+                r#"[{"name":"Pineapple","url":"/Fragrance_Note/Pineapple","categories":["Fruits"]}]"#
+            )
+        ));
+
+        let mut conn = note_database();
+        let transaction = conn.transaction().unwrap();
+        transaction
+            .execute("INSERT INTO fragrances VALUES (1, '[]', '[]', '[]')", [])
+            .unwrap();
+        crate::replace_fragrance_notes(
+            &transaction,
+            1,
+            [&draft.top_notes, &draft.heart_notes, &draft.base_notes],
+        )
+        .unwrap();
+        save_fragrance_notes(
+            &transaction,
+            [&draft.top_notes, &draft.heart_notes, &draft.base_notes],
+            &draft.notes,
+        )
+        .unwrap();
+        transaction.commit().unwrap();
+        let saved = crate::load_note_images(&conn).unwrap();
+        assert_eq!(saved.len(), 10);
+        assert!(
+            saved
+                .iter()
+                .all(|note| !note.image_url.is_empty() && note.usage_count == 1)
+        );
+        let pineapple = saved.iter().find(|note| note.name == "Pineapple").unwrap();
+        assert_eq!(pineapple.categories, ["Fruits"]);
+        assert_eq!(
+            pineapple.parfumo_url,
+            "https://www.parfumo.com/Fragrance_Note/Pineapple"
+        );
+    }
+
+    #[test]
+    fn clickable_notes_can_use_the_pyramid_title_and_image_alt_text() {
+        let body = r#"<h1>Test</h1><span itemprop="brand">House</span><div class="pyramid_block"><div class="pyramid_title"><img alt="Heart Notes"> Heart Notes</div><div><span class="clickable_note_img" data-n_id="1894"><span><img src="https://media.parfumo.com/notes_png/musk.png" alt="Musk"></span></span></div></div>"#;
+        let draft = parse_fragrance(body, String::new()).unwrap();
+        assert_eq!(draft.heart_notes, ["Musk"]);
+        assert!(draft.top_notes.is_empty());
+        assert!(draft.base_notes.is_empty());
+        assert_eq!(
+            draft.notes[0].image_url,
+            "https://media.parfumo.com/notes_png/musk.png"
+        );
+    }
+
+    #[test]
+    fn retains_fragrance_page_note_details_for_search() {
+        let body = r#"<h1>Test</h1><span itemprop="brand">House</span>
+          <div><h3>Top Notes</h3><a href="/Fragrance_Note/Rose"><img src="/img/placeholder.png" data-src="https://media.parfumo.com/notes_png/rose.png?width=40" alt="Rose"></a></div>
+          <div><h3>Heart Notes</h3><div><img src="https://media.parfumo.com/notes_png/musk.png"><a href="/Fragrance_Note/Musk">Musk</a></div><a href="/Fragrance_Note/Rose">Rose</a></div>
+          <div><h3>Base Notes</h3><a href="https://evil.example/Fragrance_Note/Bad">Bad</a></div>"#;
+        let draft = parse_fragrance(body, String::new()).unwrap();
+        assert_eq!(draft.top_notes, ["Rose"]);
+        assert_eq!(draft.heart_notes, ["Musk", "Rose"]);
+        assert!(draft.base_notes.is_empty());
+        assert_eq!(draft.notes.len(), 2);
+        assert_eq!(
+            draft.notes[0].image_url,
+            "https://media.parfumo.com/notes_png/rose.png"
+        );
+        assert_eq!(
+            draft.notes[0].parfumo_url,
+            "https://www.parfumo.com/Fragrance_Note/Rose"
+        );
+        assert_eq!(
+            draft.notes[1].image_url,
+            "https://media.parfumo.com/notes_png/musk.png"
+        );
+    }
+
+    #[test]
+    fn resolves_the_exact_note_and_keeps_the_fragrance_page_name() {
+        let mut note = ParfumoNote {
+            name: "White musk".into(),
+            image_url: String::new(),
+            parfumo_url: "/Fragrance_Note/Original".into(),
+            categories: Vec::new(),
+        };
+        let results = parse_notes(
+            r#"[{"name":"White musk rose","image":"/img/wrong.png"},{"name":" WHITE   MUSK ","image":"https://media.parfumo.com/notes_png/musk.png?width=40","url":"/Fragrance_Note/White_Musk","categories":["Animalic Notes","ScentMix"]}]"#,
+        );
+        assert!(apply_note_search_result(&mut note, results));
+        assert_eq!(note.name, "White musk");
+        assert_eq!(
+            note.image_url,
+            "https://media.parfumo.com/notes_png/musk.png"
+        );
+        assert_eq!(
+            note.parfumo_url,
+            "https://www.parfumo.com/Fragrance_Note/White_Musk"
+        );
+        assert_eq!(note.categories, ["Animalic Notes"]);
+
+        // A missing field in the search result must not erase page data.
+        assert!(apply_note_search_result(
+            &mut note,
+            parse_notes(r#"[{"name":"White musk"}]"#)
+        ));
+        assert_eq!(
+            note.image_url,
+            "https://media.parfumo.com/notes_png/musk.png"
+        );
+        assert_eq!(note.categories, ["Animalic Notes"]);
+    }
+
+    #[test]
+    fn unresolved_search_keeps_page_details_without_using_a_similar_note() {
+        let mut note = ParfumoNote {
+            name: "Rose".into(),
+            image_url: "https://media.parfumo.com/notes_png/rose.png".into(),
+            parfumo_url: "https://www.parfumo.com/Fragrance_Note/Rose".into(),
+            categories: Vec::new(),
+        };
+        assert!(!apply_note_search_result(
+            &mut note,
+            parse_notes(
+                r#"[{"name":"Rosewood","image":"/img/rosewood.png","url":"/Fragrance_Note/Rosewood"}]"#
+            )
+        ));
+        assert!(!apply_note_search_result(&mut note, Vec::new()));
+        assert_eq!(note.name, "Rose");
+        assert_eq!(
+            note.image_url,
+            "https://media.parfumo.com/notes_png/rose.png"
+        );
+        assert_eq!(
+            note.parfumo_url,
+            "https://www.parfumo.com/Fragrance_Note/Rose"
+        );
+    }
+
+    #[test]
+    fn fragrance_page_notes_populate_the_library_from_note_search_results() {
+        let mut draft = parse_fragrance(r#"<h1>Test</h1><span itemprop="brand">House</span><div class="pyramid_block"><span class="clickable_note_img" data-nt="t" data-n_id="1">Lavender</span></div><div class="pyramid_block"><span class="clickable_note_img" data-nt="m" data-n_id="1">Lavender</span></div>"#, String::new()).unwrap();
+        assert_eq!(draft.notes.len(), 1);
+        assert!(draft.notes[0].image_url.is_empty());
+        assert!(draft.notes[0].parfumo_url.is_empty());
+        let results = parse_notes(
+            r#"<table><tr><td><div data-name_url="Lavender"><img src="https://media.parfumo.com/notes_png/lavender.png?width=40">Lavender</div></td></tr></table>"#,
+        );
+        assert!(apply_note_search_result(&mut draft.notes[0], results));
+        draft.notes[0].categories = categories_from_html(
+            r#"<a href="/Fragrance_Note/Lavender">Lavender</a><a href="/Fragrance_Notes/Herbaceous_Notes">Herbaceous Notes</a>"#,
+            "Lavender",
+        );
+
+        let mut conn = note_database();
+        let transaction = conn.transaction().unwrap();
+        transaction
+            .execute("INSERT INTO fragrances VALUES (1, '[]', '[]', '[]')", [])
+            .unwrap();
+        crate::replace_fragrance_notes(
+            &transaction,
+            1,
+            [&draft.top_notes, &draft.heart_notes, &draft.base_notes],
+        )
+        .unwrap();
+        save_fragrance_notes(
+            &transaction,
+            [&draft.top_notes, &draft.heart_notes, &draft.base_notes],
+            &draft.notes,
+        )
+        .unwrap();
+        transaction.commit().unwrap();
+        let notes = crate::load_note_images(&conn).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].name, "Lavender");
+        assert_eq!(
+            notes[0].image_url,
+            "https://media.parfumo.com/notes_png/lavender.png"
+        );
+        assert_eq!(
+            notes[0].parfumo_url,
+            "https://www.parfumo.com/Fragrance_Note/Lavender"
+        );
+        assert_eq!(notes[0].categories, ["Herbaceous Notes"]);
+        assert_eq!(notes[0].usage_count, 1);
+    }
+
+    #[test]
+    fn saves_imported_notes_once_and_preserves_existing_details() {
+        let mut conn = note_database();
+        conn.execute("INSERT INTO note_images (name, image_data_url, categories) VALUES ('Rose', 'https://example.com/my-rose.png', '[\"Flowers\"]')", []).unwrap();
+        let mut notes = parse_notes(
+            r#"[{"name":"rose","image":"https://media.parfumo.com/notes_png/rose.png","url":"/Fragrance_Note/Rose","categories":["Floral Notes"]},{"name":"Musk","image":"https://media.parfumo.com/notes_png/musk.png?width=40","url":"/Fragrance_Note/Musk","categories":["Animalic Notes"]},{"name":"Removed","url":"/Fragrance_Note/Removed"}]"#,
+        );
+        notes.push(notes[1].clone());
+        let top = vec!["rose".into(), "Pepper".into()];
+        let heart = vec!["Rose".into()];
+        let base = vec!["Musk".into()];
+        let transaction = conn.transaction().unwrap();
+        transaction
+            .execute("INSERT INTO fragrances VALUES (1, '[]', '[]', '[]')", [])
+            .unwrap();
+        crate::replace_fragrance_notes(&transaction, 1, [&top, &heart, &base]).unwrap();
+        save_fragrance_notes(&transaction, [&top, &heart, &base], &notes).unwrap();
+        transaction.commit().unwrap();
+
+        let saved = crate::load_note_images(&conn).unwrap();
+        assert_eq!(saved.len(), 3);
+        let rose = saved.iter().find(|note| note.name == "Rose").unwrap();
+        assert_eq!(rose.image_url, "https://example.com/my-rose.png");
+        assert_eq!(rose.categories, ["Flowers"]);
+        assert_eq!(
+            rose.parfumo_url,
+            "https://www.parfumo.com/Fragrance_Note/Rose"
+        );
+        assert_eq!(rose.usage_count, 1);
+        let musk = saved.iter().find(|note| note.name == "Musk").unwrap();
+        assert_eq!(
+            musk.image_url,
+            "https://media.parfumo.com/notes_png/musk.png"
+        );
+        assert_eq!(musk.categories, ["Animalic Notes"]);
+        assert_eq!(
+            musk.parfumo_url,
+            "https://www.parfumo.com/Fragrance_Note/Musk"
+        );
+        assert_eq!(musk.usage_count, 1);
+
+        // Importing into an existing fragrance also fills missing metadata.
+        let transaction = conn.transaction().unwrap();
+        notes.push(ParfumoNote {
+            name: "Pepper".into(),
+            image_url: "https://media.parfumo.com/notes_png/pepper.png".into(),
+            parfumo_url: "/Fragrance_Note/Pepper".into(),
+            categories: vec!["Spices".into()],
+        });
+        crate::replace_fragrance_notes(&transaction, 1, [&top, &heart, &base]).unwrap();
+        save_fragrance_notes(&transaction, [&top, &heart, &base], &notes).unwrap();
+        transaction.commit().unwrap();
+        let pepper = crate::load_note_image(&conn, "Pepper").unwrap();
+        assert_eq!(pepper.categories, ["Spices"]);
+        assert_eq!(pepper.usage_count, 1);
+    }
+
+    #[test]
+    fn failed_note_save_rolls_back_the_fragrance_and_note_records() {
+        let mut conn = note_database();
+        let top = vec!["Rose".into(), "Invalid".into()];
+        let empty = vec![];
+        let notes = parse_notes(
+            r#"[{"name":"Rose","image":"https://media.parfumo.com/notes_png/rose.png"},{"name":"Invalid"}]"#,
+        );
+        let mut notes = notes;
+        notes[1].image_url = "javascript:alert(1)".into();
+        {
+            let transaction = conn.transaction().unwrap();
+            transaction
+                .execute("INSERT INTO fragrances VALUES (1, '[]', '[]', '[]')", [])
+                .unwrap();
+            crate::replace_fragrance_notes(&transaction, 1, [&top, &empty, &empty]).unwrap();
+            assert!(save_fragrance_notes(&transaction, [&top, &empty, &empty], &notes).is_err());
+        }
+        assert!(crate::load_note_images(&conn).unwrap().is_empty());
+        for table in ["fragrances", "fragrance_notes"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0);
+        }
+    }
+
+    #[test]
+    fn rejects_untrusted_and_non_fragrance_urls() {
+        for url in [
+            "https://evil.com/Perfumes/A/B",
+            "https://parfumo.com.evil.com/Perfumes/A/B",
+            "/Brands/Dior",
+            "http://parfumo.com/Perfumes/A/B",
+        ] {
+            assert!(fragrance_url(url).is_err());
+        }
+        assert_eq!(
+            fragrance_url("/Perfumes/Dior/Sauvage").unwrap(),
+            "https://www.parfumo.com/Perfumes/Dior/Sauvage"
+        );
+    }
+    #[test]
+    fn search_deduplicates_and_ignores_navigation() {
+        let results = parse_fragrance_results(r#"<a href="/Brands/Dior">Dior</a><a href="/Perfumes/Dior/Sauvage"><img alt="Sauvage" data-src="https://media.parfumo.com/a.jpg"></a><a href="/Perfumes/Dior/Sauvage">Sauvage</a>"#).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Sauvage");
+    }
+    #[test]
+    fn imports_product_and_labelled_pyramid_without_inventing_missing_fields() {
+        let body = r#"<script type="application/ld+json">{"@graph":[{"@type":"Product","name":"Test","brand":{"name":"House"},"image":["https://media.parfumo.com/bottle.jpg"]}]}</script><a href="/Release_Years/2020">2020</a><div><h3>Top Notes</h3><a href="/Fragrance_Note/Bergamot">Bergamot</a></div><div><h3>Heart Notes</h3><a href="/Fragrance_Note/Rose">Rose</a></div><div><h3>Base Notes</h3><a href="/Fragrance_Note/Musk">Musk</a></div>"#;
+        let draft =
+            parse_fragrance(body, "https://www.parfumo.com/Perfumes/House/Test".into()).unwrap();
+        assert_eq!(draft.name, "Test");
+        assert_eq!(draft.brand, "House");
+        assert_eq!(draft.year, Some(2020));
+        assert_eq!(draft.top_notes, ["Bergamot"]);
+        assert_eq!(draft.heart_notes, ["Rose"]);
+        assert_eq!(draft.base_notes, ["Musk"]);
+        assert!(draft.audience.is_empty());
+        assert!(draft.warnings.is_empty());
+        assert!(parse_fragrance("<html>Unknown page</html>", String::new()).is_err());
+        assert!(parse_fragrance_results("Just a moment...").is_err());
+    }
 }

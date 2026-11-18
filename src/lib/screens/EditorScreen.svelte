@@ -1,14 +1,53 @@
 <script lang="ts">
-  import type { Fragrance } from '$lib/backend';
+  import { backend, type Fragrance, type ParfumoNote, type ParfumoFragranceResult, type ParfumoFragranceDraft } from '$lib/backend';
 
-  let { fragrance = $bindable(), entries, noteNames, error, saving, onSave }: {
+  let { fragrance = $bindable(), importedNotes = $bindable(), entries, noteNames, error, saving, onSave }: {
     fragrance: Fragrance;
+    importedNotes: ParfumoNote[];
     entries: Fragrance[];
     noteNames: string[];
     error: string;
     saving: boolean;
     onSave: () => void;
   } = $props();
+
+  let parfumoQuery = $state('');
+  let parfumoResults = $state<ParfumoFragranceResult[]>([]);
+  let parfumoDraft = $state<ParfumoFragranceDraft | null>(null);
+  let parfumoBusy = $state(false);
+  let parfumoError = $state('');
+  let parfumoSearched = $state(false);
+  let parfumoApplied = $state(false);
+  async function searchParfumo() {
+    if (parfumoBusy || parfumoQuery.trim().length < 2) return;
+    parfumoBusy = true; parfumoError = ''; parfumoResults = []; parfumoDraft = null; parfumoSearched = false; parfumoApplied = false;
+    try {
+      if (/^https?:/i.test(parfumoQuery.trim())) parfumoDraft = await backend.importParfumoFragrance(parfumoQuery.trim());
+      else { parfumoResults = await backend.searchParfumoFragrances(parfumoQuery); parfumoSearched = true; }
+    } catch (error) { parfumoError = String(error); }
+    finally { parfumoBusy = false; }
+  }
+  async function readParfumo(url: string) {
+    parfumoBusy = true; parfumoError = ''; parfumoDraft = null;
+    try { parfumoDraft = await backend.importParfumoFragrance(url); }
+    catch (error) { parfumoError = String(error); }
+    finally { parfumoBusy = false; }
+  }
+  function applyParfumo() {
+    if (!parfumoDraft) return;
+    const draft = parfumoDraft;
+    // Only available catalogue fields replace the editor's current values.
+    for (const key of ['name', 'brand', 'audience', 'concentration', 'perfumer', 'imageUrl'] as const) {
+      if (draft[key]) fragrance[key] = draft[key];
+    }
+    if (draft.year !== null) fragrance.year = draft.year;
+    for (const key of ['topNotes', 'heartNotes', 'baseNotes'] as const) {
+      if (draft[key].length) fragrance[key] = [...draft[key]];
+    }
+    importedNotes = [...new Map([...importedNotes, ...draft.notes].map((note) => [note.name.toLocaleLowerCase(), note])).values()];
+    fragrance.description = [draft.description || fragrance.description, `Source: ${draft.sourceUrl}`].filter(Boolean).join('\n\n');
+    parfumoApplied = true; parfumoDraft = null; parfumoResults = []; parfumoSearched = false;
+  }
 
   type NoteLayer = 'topNotes' | 'heartNotes' | 'baseNotes';
   const steps = ['General information', 'Fragrance pyramid', 'Additional details'];
@@ -74,6 +113,36 @@
   <div class="heading"><div><h1>{fragrance.id === undefined ? 'Add a fragrance' : 'Edit fragrance'}</h1><p>Capture the details that make each scent unforgettable.</p></div><div class="step-count">STEP 0{step + 1} <span>/ 03</span></div></div>
   <div class="progress" aria-label="Form progress">{#each steps as label, index}<button class:current={step === index} class:done={step > index} onclick={() => { if (index < step) step = index; }}><span class="step-number">{step > index ? '✓' : `0${index + 1}`}</span><span>{label}</span></button>{#if index < 2}<div class:filled={step > index} class="connector"></div>{/if}{/each}</div>
   {#if localError || error}<div class="message error" role="alert">{localError || error}</div>{/if}
+  {#if step === 0}
+    <section class="parfumo-import" aria-label="Import from Parfumo">
+      <h2>Find on Parfumo</h2>
+      <p>Search by fragrance or brand, or paste a fragrance link. Connect Parfumo in Settings first.</p>
+      <form onsubmit={(event) => { event.preventDefault(); searchParfumo(); }}>
+        <input aria-label="Parfumo fragrance search or link" placeholder="e.g. Dior Sauvage, or a Parfumo link" bind:value={parfumoQuery} disabled={parfumoBusy} />
+        <button type="submit" class="primary-button" disabled={parfumoBusy || parfumoQuery.trim().length < 2}>{parfumoBusy ? 'Loading…' : 'Search Parfumo'}</button>
+      </form>
+      {#if parfumoBusy}<p role="status">Reading the fragrance and note details from Parfumo…</p>{/if}
+      {#if parfumoError}<p class="message error" role="alert">{parfumoError}</p>{/if}
+      {#if parfumoSearched && !parfumoResults.length}<p role="status">No fragrances found. Try another name or paste the fragrance’s Parfumo link.</p>{/if}
+      {#if parfumoResults.length && !parfumoDraft}
+        <ul class="parfumo-results">{#each parfumoResults as result}<li><button type="button" disabled={parfumoBusy} onclick={() => readParfumo(result.url)}>{#if result.imageUrl}<img src={result.imageUrl} alt="" loading="lazy" />{/if}<span><strong>{result.name}</strong><small>{decodeURI(new URL(result.url).pathname).replaceAll('_', ' ')}</small></span><span>Review →</span></button></li>{/each}</ul>
+      {/if}
+      {#if parfumoDraft}
+        <div class="parfumo-draft">
+          {#if parfumoDraft.imageUrl}<img class="parfumo-bottle" src={parfumoDraft.imageUrl} alt={parfumoDraft.name} />{/if}
+          <div><h3>{parfumoDraft.name}</h3><p>{parfumoDraft.brand}{parfumoDraft.year ? ` · ${parfumoDraft.year}` : ''}</p>
+          <p>{[parfumoDraft.concentration, parfumoDraft.audience, parfumoDraft.perfumer].filter(Boolean).join(' · ')}</p>
+          {#each [{ label: 'Top notes', notes: parfumoDraft.topNotes }, { label: 'Heart notes', notes: parfumoDraft.heartNotes }, { label: 'Base notes', notes: parfumoDraft.baseNotes }] as layer}<p><strong>{layer.label}:</strong> {layer.notes.join(', ') || 'Not available'}</p>{/each}
+          {#if parfumoDraft.description}<p>{parfumoDraft.description}</p>{/if}
+          {#each parfumoDraft.warnings as warning}<p role="status">{warning}</p>{/each}
+          <p><small>Available details will replace the corresponding form fields. When you save the fragrance, its notes and available images, categories, and source links will also be saved in the Notes library. Images remain linked to Parfumo.</small></p>
+          <button type="button" class="primary-button" onclick={applyParfumo}>Use these details</button>
+          <button type="button" onclick={() => parfumoDraft = null}>Dismiss</button></div>
+        </div>
+      {/if}
+      {#if parfumoApplied}<p role="status">Details added to the form. Review all three steps, then save the fragrance and its notes.</p>{/if}
+    </section>
+  {/if}
   <div class="form-card">
     {#if step === 0}
       <div class="card-heading"><div><h2>The essentials</h2><p>Start with the fragrance’s identity.</p></div></div>
@@ -102,3 +171,20 @@
   <div class="form-footer"><span>Fields marked <b>*</b> are required</span><div>{#if step > 0}<button class="back-button" disabled={saving} onclick={() => { step -= 1; localError = ''; }}>← Back</button>{/if}{#if step < 2}<button class="primary-button" onclick={next}>Continue</button>{:else}<button class="primary-button" disabled={saving} onclick={onSave}>{#if saving}<span class="save-spinner" aria-hidden="true"></span>Saving…{:else}{fragrance.id === undefined ? 'Save fragrance' : 'Save changes'}{/if}</button>{/if}</div></div>
   {#if saving}<p class="save-status" role="status">Saving your fragrance…</p>{/if}
 </div>
+
+<style>
+  .parfumo-import { margin-bottom: 24px; padding: 24px; border: 1px solid #e5dfd5; border-radius: 16px; background: #fffdf9; }
+  .parfumo-import h2, .parfumo-import h3 { margin: 0 0 8px; }
+  .parfumo-import p { line-height: 1.6; }
+  .parfumo-import form { display: flex; gap: 12px; }
+  .parfumo-import input { flex: 1; min-width: 0; padding: 12px; border: 1px solid #d8d0c4; border-radius: 8px; }
+  .parfumo-results { list-style: none; padding: 0; max-height: 360px; overflow: auto; }
+  .parfumo-results button { display: flex; align-items: center; gap: 16px; width: 100%; text-align: left; padding: 12px; border: 0; border-bottom: 1px solid #e5dfd5; background: transparent; cursor: pointer; }
+  .parfumo-results button:hover { background: #f4efe7; }
+  .parfumo-results img { width: 48px; height: 64px; object-fit: contain; }
+  .parfumo-results small { display: block; overflow-wrap: anywhere; margin-top: 4px; }
+  .parfumo-results button > span:first-of-type { flex: 1; }
+  .parfumo-draft { display: flex; gap: 24px; margin-top: 24px; }
+  .parfumo-bottle { width: 120px; height: 180px; object-fit: contain; }
+  @media (max-width: 600px) { .parfumo-import form, .parfumo-draft { flex-direction: column; } }
+</style>

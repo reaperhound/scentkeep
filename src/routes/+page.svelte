@@ -25,6 +25,7 @@
     return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 10) / 10 : null;
   }
   let fragrance = $state<Fragrance>(blank());
+  let importedFragranceNotes = $state<ParfumoNote[]>([]);
   let entries = $state<Fragrance[]>([]);
   let editorVersion = $state(0);
   let view = $state<'form' | 'library' | 'notes' | 'detail' | 'settings'>('library');
@@ -589,6 +590,7 @@
   }
   function startNew() {
     fragrance = { ...blank(), shelf: activeShelf };
+    importedFragranceNotes = [];
     editorVersion += 1;
     mobileSidebarOpen = false;
     view = 'form'; error = ''; success = '';
@@ -615,6 +617,7 @@
   }
   function startEdit(item: Fragrance) {
     fragrance = { ...item, ratings: { ...blank().ratings, ...item.ratings }, topNotes: [...item.topNotes], heartNotes: [...item.heartNotes], baseNotes: [...item.baseNotes] };
+    importedFragranceNotes = [];
     editorVersion += 1;
     view = 'form'; error = ''; success = ''; mobileSidebarOpen = false;
   }
@@ -639,11 +642,14 @@
       const wasEditing = fragrance.id !== undefined;
       const previous = wasEditing ? entries.find((item) => item.id === fragrance.id) : undefined;
       const id = fragrance.id === undefined
-        ? await backend.saveFragrance(fragrance)
-        : (await backend.updateFragrance(fragrance), fragrance.id);
+        ? await backend.saveFragrance(fragrance, importedFragranceNotes)
+        : (await backend.updateFragrance(fragrance, importedFragranceNotes), fragrance.id);
       updateFragranceLocally(previous, normalizedFragrance(fragrance, id));
       const savedShelf = fragrance.shelf; fragrance = blank(); activeShelf = savedShelf;
       view = 'library'; success = wasEditing ? 'Fragrance updated.' : 'Fragrance saved to your collection.';
+      importedFragranceNotes = [];
+      try { noteImages = await backend.listNoteImages(); }
+      catch (cause) { error = `Fragrance saved. Could not reload the Notes library: ${String(cause)}`; }
     } catch (e) { error = String(e); }
     finally { saving = false; }
   }
@@ -681,7 +687,7 @@
       <div class="update-notice" role="status"><span>{updateMessage}</span>{#if availableUpdate && !installingUpdate}{#if canInstallUpdate}<button onclick={installUpdate}>Update and restart</button>{:else}<button onclick={() => openUrl('https://github.com/reaperhound/scentkeep/releases/latest')}>Open release page</button>{/if}{/if}</div>
     {/if}
     {#if view === 'form'}
-      {#key editorVersion}<EditorScreen bind:fragrance {entries} noteNames={allNotes} {error} {saving} onSave={save} />{/key}
+      {#key editorVersion}<EditorScreen bind:fragrance bind:importedNotes={importedFragranceNotes} {entries} noteNames={allNotes} {error} {saving} onSave={save} />{/key}
     {:else if view === 'detail' && selectedFragrance}
       <DetailsScreen fragrance={selectedFragrance} {noteImages} accords={fragranceAccords} accordsLoading={fragranceAccordsLoading} accordsError={fragranceAccordsError} onBack={() => view = 'library'} onEdit={() => startEdit(selectedFragrance)} />
     {:else if view === 'notes'}
