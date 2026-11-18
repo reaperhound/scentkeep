@@ -111,7 +111,11 @@ impl TryFrom<FragranceRow> for Fragrance {
             base_notes: notes_from_cell(&row.base_notes)?,
             perfumer: row.perfumer,
             bottle_rating: row.bottle_rating,
-            ratings: if row.ratings.is_empty() { Ratings::default() } else { serde_json::from_str(&row.ratings).map_err(|e| e.to_string())? },
+            ratings: if row.ratings.is_empty() {
+                Ratings::default()
+            } else {
+                serde_json::from_str(&row.ratings).map_err(|e| e.to_string())?
+            },
             rating_count: row.rating_count,
             image_url: row.image_url,
             shelf: row.shelf,
@@ -409,12 +413,30 @@ pub(super) fn sync_backup(
                 fragrance.shelf, fragrance.bottles_owned, fragrance.bottles_finished, fragrance.favourite,
                 fragrance.price_bought, fragrance.current_price, fragrance.concentration.trim(), id, serde_json::to_string(&fragrance.ratings).map_err(|e| e.to_string())?
             ]).map_err(|e| e.to_string())?;
+            replace_fragrance_notes(
+                &transaction,
+                *id,
+                [
+                    &fragrance.top_notes,
+                    &fragrance.heart_notes,
+                    &fragrance.base_notes,
+                ],
+            )?;
             report.fragrances_updated += 1;
         } else {
-            insert_fragrance(&transaction, &fragrance)?;
-            fragrance_ids.insert(key, transaction.last_insert_rowid());
+            let id = insert_fragrance(&transaction, &fragrance)?;
+            fragrance_ids.insert(key, id);
             report.fragrances_added += 1;
         }
+        note_names.extend(
+            fragrance
+                .top_notes
+                .iter()
+                .chain(&fragrance.heart_notes)
+                .chain(&fragrance.base_notes)
+                .map(|name| name.trim().to_lowercase())
+                .filter(|name| !name.is_empty()),
+        );
     }
     for (_, note) in notes {
         if note_names.insert(note.name.trim().to_lowercase()) {
@@ -486,7 +508,14 @@ mod tests {
             shelf TEXT NOT NULL DEFAULT 'Collection', bottles_owned INTEGER NOT NULL DEFAULT 0,
             bottles_finished INTEGER NOT NULL DEFAULT 0, favourite INTEGER NOT NULL DEFAULT 0,
             price_bought REAL, current_price REAL, concentration TEXT NOT NULL DEFAULT ''
-        ); CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL, parfumo_url TEXT NOT NULL DEFAULT '', categories TEXT NOT NULL DEFAULT '[]');").unwrap();
+        ); CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL, parfumo_url TEXT NOT NULL DEFAULT '', categories TEXT NOT NULL DEFAULT '[]');
+        CREATE TABLE fragrance_notes (
+            fragrance_id INTEGER NOT NULL REFERENCES fragrances(id) ON DELETE CASCADE,
+            note_name TEXT NOT NULL COLLATE NOCASE REFERENCES note_images(name) ON UPDATE CASCADE ON DELETE CASCADE,
+            layer TEXT NOT NULL CHECK (layer IN ('top', 'heart', 'base')),
+            position INTEGER NOT NULL,
+            PRIMARY KEY (fragrance_id, layer, position)
+        );").unwrap();
         conn
     }
 
@@ -556,7 +585,7 @@ mod tests {
         let mut source = test_db();
         let first = concat!(
             "collection,name,brand,year,audience,description,top_notes,heart_notes,base_notes,perfumer,bottle_rating,rating_count,image_url,shelf,bottles_owned,bottles_finished,favourite,price_bought,current_price\n",
-            "Fresh,Rose,Maison,2024,Unisex,Original,[],[],[],,,,,Collection,0,0,false,,\n"
+            "Fresh,Rose,Maison,2024,Unisex,Original,\"[\"\"Rose\"\"]\",[],[],,,,,Collection,0,0,false,,\n"
         );
         import_fragrances(&mut source, first).unwrap();
         import_notes(

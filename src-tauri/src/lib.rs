@@ -55,11 +55,19 @@ struct Ratings {
 
 impl Ratings {
     fn values(&self) -> [Option<f64>; 5] {
-        [self.scent, self.longevity, self.sillage, self.bottle, self.value_for_money]
+        [
+            self.scent,
+            self.longevity,
+            self.sillage,
+            self.bottle,
+            self.value_for_money,
+        ]
     }
     fn overall(&self) -> Option<f64> {
         let values: Vec<_> = self.values().into_iter().flatten().collect();
-        if values.is_empty() { None } else {
+        if values.is_empty() {
+            None
+        } else {
             Some((values.iter().sum::<f64>() / values.len() as f64 * 10.0).round() / 10.0)
         }
     }
@@ -68,7 +76,13 @@ impl Ratings {
 #[cfg(test)]
 #[test]
 fn overall_rating_averages_available_categories() {
-    let ratings = Ratings { scent: Some(8.0), longevity: Some(7.0), sillage: None, bottle: Some(9.0), value_for_money: Some(6.0) };
+    let ratings = Ratings {
+        scent: Some(8.0),
+        longevity: Some(7.0),
+        sillage: None,
+        bottle: Some(9.0),
+        value_for_money: Some(6.0),
+    };
     assert_eq!(ratings.overall(), Some(7.5));
     assert_eq!(Ratings::default().overall(), None);
 }
@@ -80,7 +94,9 @@ fn default_shelf() -> String {
 fn database(app: &tauri::AppHandle) -> Result<Connection, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let conn = Connection::open(dir.join("scentkeep.sqlite3")).map_err(|e| e.to_string())?;
+    let mut conn = Connection::open(dir.join("scentkeep.sqlite3")).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS fragrances (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,7 +173,94 @@ fn database(app: &tauri::AppHandle) -> Result<Connection, String> {
             .map_err(|e| e.to_string())?;
         }
     }
+    ensure_fragrance_notes_schema(&mut conn)?;
     Ok(conn)
+}
+
+fn ensure_fragrance_notes_schema(conn: &mut Connection) -> Result<(), String> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'fragrance_notes')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if exists {
+        return Ok(());
+    }
+
+    let transaction = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    transaction
+        .execute_batch(
+            "CREATE TABLE fragrance_notes (
+                fragrance_id INTEGER NOT NULL REFERENCES fragrances(id) ON DELETE CASCADE,
+                note_name TEXT NOT NULL COLLATE NOCASE REFERENCES note_images(name) ON UPDATE CASCADE ON DELETE CASCADE,
+                layer TEXT NOT NULL CHECK (layer IN ('top', 'heart', 'base')),
+                position INTEGER NOT NULL CHECK (position >= 0),
+                PRIMARY KEY (fragrance_id, layer, position)
+            );
+            CREATE INDEX fragrance_notes_note_name_idx ON fragrance_notes(note_name COLLATE NOCASE);",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let fragrances = {
+        let mut statement = transaction
+            .prepare("SELECT id, top_notes, heart_notes, base_notes FROM fragrances")
+            .map_err(|e| e.to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| e.to_string())?
+    };
+    for (id, top, heart, base) in fragrances {
+        let layers = [top, heart, base]
+            .map(|json| serde_json::from_str::<Vec<String>>(&json).map_err(|e| e.to_string()))
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        replace_fragrance_notes(&transaction, id, [&layers[0], &layers[1], &layers[2]])?;
+    }
+    transaction.commit().map_err(|e| e.to_string())
+}
+
+fn replace_fragrance_notes(
+    conn: &Connection,
+    fragrance_id: i64,
+    layers: [&Vec<String>; 3],
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM fragrance_notes WHERE fragrance_id = ?1",
+        [fragrance_id],
+    )
+    .map_err(|e| e.to_string())?;
+    for (layer, notes) in ["top", "heart", "base"].into_iter().zip(layers) {
+        for (position, note) in notes.iter().enumerate() {
+            let note = note.trim();
+            if note.is_empty() {
+                continue;
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO note_images (name, image_data_url) VALUES (?1, '')",
+                [note],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO fragrance_notes (fragrance_id, note_name, layer, position) VALUES (?1, ?2, ?3, ?4)",
+                params![fragrance_id, note, layer, position as i64],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_fragrance(fragrance: &Fragrance) -> Result<(), String> {
@@ -173,7 +276,13 @@ fn validate_fragrance(fragrance: &Fragrance) -> Result<(), String> {
     {
         return Err("Bottle rating must be between 0 and 10".into());
     }
-    if fragrance.ratings.values().into_iter().flatten().any(|rating| !rating.is_finite() || !(0.0..=10.0).contains(&rating)) {
+    if fragrance
+        .ratings
+        .values()
+        .into_iter()
+        .flatten()
+        .any(|rating| !rating.is_finite() || !(0.0..=10.0).contains(&rating))
+    {
         return Err("Ratings must be between 0 and 10".into());
     }
     if fragrance.rating_count.is_some_and(|count| count < 0) {
@@ -249,14 +358,13 @@ fn save_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<i64, St
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
     ensure_unique_fragrance(&transaction, &fragrance, None)?;
-    insert_fragrance(&transaction, &fragrance)?;
-    let id = transaction.last_insert_rowid();
+    let id = insert_fragrance(&transaction, &fragrance)?;
     transaction.commit().map_err(|e| e.to_string())?;
     backup::after_change(&app)?;
     Ok(id)
 }
 
-fn insert_fragrance(conn: &Connection, fragrance: &Fragrance) -> Result<(), String> {
+fn insert_fragrance(conn: &Connection, fragrance: &Fragrance) -> Result<i64, String> {
     conn.execute("INSERT INTO fragrances (collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url, shelf, bottles_owned, bottles_finished, favourite, price_bought, current_price, concentration, ratings)
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)", params![
         fragrance.collection.trim(), fragrance.name.trim(), fragrance.brand.trim(), fragrance.year,
@@ -266,7 +374,17 @@ fn insert_fragrance(conn: &Connection, fragrance: &Fragrance) -> Result<(), Stri
         serde_json::to_string(&fragrance.base_notes).map_err(|e| e.to_string())?,
         fragrance.perfumer.trim(), fragrance.ratings.overall().or(fragrance.bottle_rating), fragrance.rating_count, fragrance.image_url.trim(), fragrance.shelf, fragrance.bottles_owned, fragrance.bottles_finished, fragrance.favourite, fragrance.price_bought, fragrance.current_price, fragrance.concentration.trim(), serde_json::to_string(&fragrance.ratings).map_err(|e| e.to_string())?
     ]).map_err(|e| e.to_string())?;
-    Ok(())
+    let id = conn.last_insert_rowid();
+    replace_fragrance_notes(
+        conn,
+        id,
+        [
+            &fragrance.top_notes,
+            &fragrance.heart_notes,
+            &fragrance.base_notes,
+        ],
+    )?;
+    Ok(id)
 }
 
 #[tauri::command]
@@ -289,6 +407,15 @@ fn update_fragrance(app: tauri::AppHandle, fragrance: Fragrance) -> Result<(), S
     if changed == 0 {
         return Err("Fragrance not found".into());
     }
+    replace_fragrance_notes(
+        &transaction,
+        id,
+        [
+            &fragrance.top_notes,
+            &fragrance.heart_notes,
+            &fragrance.base_notes,
+        ],
+    )?;
     transaction.commit().map_err(|e| e.to_string())?;
     backup::after_change(&app)
 }
@@ -312,35 +439,63 @@ fn list_fragrances(app: tauri::AppHandle) -> Result<Vec<Fragrance>, String> {
 }
 
 fn load_fragrances(conn: &Connection) -> Result<Vec<Fragrance>, String> {
-    let mut statement = conn.prepare("SELECT id, collection, name, brand, year, audience, description, top_notes, heart_notes, base_notes, perfumer, bottle_rating, rating_count, image_url, shelf, bottles_owned, bottles_finished, favourite, price_bought, current_price, concentration, ratings FROM fragrances ORDER BY id DESC").map_err(|e| e.to_string())?;
+    let mut note_layers: HashMap<i64, [Vec<String>; 3]> = HashMap::new();
+    {
+        let mut statement = conn
+            .prepare(
+                "SELECT fn.fragrance_id, fn.layer, ni.name
+                 FROM fragrance_notes fn
+                 JOIN note_images ni ON ni.name = fn.note_name
+                 ORDER BY fn.fragrance_id, CASE fn.layer WHEN 'top' THEN 0 WHEN 'heart' THEN 1 ELSE 2 END, fn.position",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (id, layer, name) = row.map_err(|e| e.to_string())?;
+            let index = match layer.as_str() {
+                "top" => 0,
+                "heart" => 1,
+                _ => 2,
+            };
+            note_layers.entry(id).or_default()[index].push(name);
+        }
+    }
+    let mut statement = conn.prepare("SELECT id, collection, name, brand, year, audience, description, perfumer, bottle_rating, rating_count, image_url, shelf, bottles_owned, bottles_finished, favourite, price_bought, current_price, concentration, ratings FROM fragrances ORDER BY id DESC").map_err(|e| e.to_string())?;
     let rows = statement
         .query_map([], |row| {
-            let top: String = row.get(7)?;
-            let heart: String = row.get(8)?;
-            let base: String = row.get(9)?;
+            let id = row.get::<_, i64>(0)?;
+            let layers = note_layers.remove(&id).unwrap_or_default();
             Ok(Fragrance {
-                id: row.get(0)?,
+                id: Some(id),
                 collection: row.get(1)?,
                 name: row.get(2)?,
                 brand: row.get(3)?,
                 year: row.get(4)?,
                 audience: row.get(5)?,
-                concentration: row.get(20)?,
+                concentration: row.get(17)?,
                 description: row.get(6)?,
-                top_notes: serde_json::from_str(&top).unwrap_or_default(),
-                heart_notes: serde_json::from_str(&heart).unwrap_or_default(),
-                base_notes: serde_json::from_str(&base).unwrap_or_default(),
-                perfumer: row.get(10)?,
-                bottle_rating: row.get(11)?,
-                ratings: serde_json::from_str(&row.get::<_, String>(21)?).unwrap_or_default(),
-                rating_count: row.get(12)?,
-                image_url: row.get(13)?,
-                shelf: row.get(14)?,
-                bottles_owned: row.get(15)?,
-                bottles_finished: row.get(16)?,
-                favourite: row.get(17)?,
-                price_bought: row.get(18)?,
-                current_price: row.get(19)?,
+                top_notes: layers[0].clone(),
+                heart_notes: layers[1].clone(),
+                base_notes: layers[2].clone(),
+                perfumer: row.get(7)?,
+                bottle_rating: row.get(8)?,
+                ratings: serde_json::from_str(&row.get::<_, String>(18)?).unwrap_or_default(),
+                rating_count: row.get(9)?,
+                image_url: row.get(10)?,
+                shelf: row.get(11)?,
+                bottles_owned: row.get(12)?,
+                bottles_finished: row.get(13)?,
+                favourite: row.get(14)?,
+                price_bought: row.get(15)?,
+                current_price: row.get(16)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -371,62 +526,23 @@ fn list_note_images(app: tauri::AppHandle) -> Result<Vec<NoteImage>, String> {
 }
 
 fn load_note_images(conn: &Connection) -> Result<Vec<NoteImage>, String> {
-    // Existing fragrances predate the note catalogue. Bring their notes in without
-    // replacing any images already assigned to those notes.
-    let mut notes = Vec::new();
-    let mut usage_counts = HashMap::<String, usize>::new();
-    {
-        let mut fragrances = conn
-            .prepare("SELECT top_notes, heart_notes, base_notes FROM fragrances")
-            .map_err(|e| e.to_string())?;
-        let rows = fragrances
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            let (top, heart, base) = row.map_err(|e| e.to_string())?;
-            let mut used_in_fragrance = HashSet::new();
-            for json in [top, heart, base] {
-                let values: Vec<String> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-                used_in_fragrance.extend(
-                    values
-                        .iter()
-                        .map(|name| name.trim().to_lowercase())
-                        .filter(|name| !name.is_empty()),
-                );
-                notes.extend(values);
-            }
-            for name in used_in_fragrance {
-                *usage_counts.entry(name).or_default() += 1;
-            }
-        }
-    }
-    for note in notes {
-        if !note.trim().is_empty() {
-            conn.execute(
-                "INSERT OR IGNORE INTO note_images (name, image_data_url) VALUES (?1, '')",
-                [note.trim()],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-    }
     let mut statement = conn
-        .prepare("SELECT name, image_data_url, parfumo_url, categories FROM note_images")
+        .prepare(
+            "SELECT ni.name, ni.image_data_url, ni.parfumo_url, ni.categories,
+                    COUNT(DISTINCT fn.fragrance_id)
+             FROM note_images ni
+             LEFT JOIN fragrance_notes fn ON fn.note_name = ni.name
+             GROUP BY ni.name, ni.image_data_url, ni.parfumo_url, ni.categories",
+        )
         .map_err(|e| e.to_string())?;
     let rows = statement
         .query_map([], |row| {
-            let name: String = row.get(0)?;
             Ok(NoteImage {
-                usage_count: *usage_counts.get(&name.to_lowercase()).unwrap_or(&0),
-                name,
+                name: row.get(0)?,
                 image_url: row.get(1)?,
                 parfumo_url: row.get(2)?,
                 categories: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
+                usage_count: row.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -765,11 +881,20 @@ mod tests {
     #[test]
     fn note_usage_counts_each_fragrance_once() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE fragrances (top_notes TEXT, heart_notes TEXT, base_notes TEXT);
+        conn.execute_batch("CREATE TABLE fragrances (id INTEGER PRIMARY KEY, top_notes TEXT, heart_notes TEXT, base_notes TEXT);
             CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL, parfumo_url TEXT NOT NULL DEFAULT '', categories TEXT NOT NULL DEFAULT '[]');
-            INSERT INTO fragrances VALUES ('[\"Rose\",\"rose\"]', '[\"ROSE\"]', '[]');
-            INSERT INTO fragrances VALUES ('[\"Rose\"]', '[]', '[]');
+            CREATE TABLE fragrance_notes (fragrance_id INTEGER NOT NULL, note_name TEXT NOT NULL COLLATE NOCASE, layer TEXT NOT NULL, position INTEGER NOT NULL, PRIMARY KEY (fragrance_id, layer, position));
+            INSERT INTO fragrances VALUES (1, '[\"Rose\",\"rose\"]', '[\"ROSE\"]', '[]');
+            INSERT INTO fragrances VALUES (2, '[\"Rose\"]', '[]', '[]');
+            INSERT INTO note_images (name, image_data_url) VALUES ('Rose', '');
             INSERT INTO note_images (name, image_data_url) VALUES ('Jasmine', '');").unwrap();
+        conn.execute_batch(
+            "INSERT INTO fragrance_notes VALUES (1, 'Rose', 'top', 0);
+            INSERT INTO fragrance_notes VALUES (1, 'rose', 'top', 1);
+            INSERT INTO fragrance_notes VALUES (1, 'ROSE', 'heart', 0);
+            INSERT INTO fragrance_notes VALUES (2, 'Rose', 'top', 0);",
+        )
+        .unwrap();
 
         let notes = load_note_images(&conn).unwrap();
         assert_eq!(
@@ -788,6 +913,27 @@ mod tests {
                 .usage_count,
             0
         );
+    }
+
+    #[test]
+    fn fragrance_note_schema_backfills_existing_json_once() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;
+            CREATE TABLE fragrances (id INTEGER PRIMARY KEY, top_notes TEXT, heart_notes TEXT, base_notes TEXT);
+            CREATE TABLE note_images (name TEXT PRIMARY KEY COLLATE NOCASE, image_data_url TEXT NOT NULL, parfumo_url TEXT NOT NULL DEFAULT '', categories TEXT NOT NULL DEFAULT '[]');
+            INSERT INTO fragrances VALUES (1, '[\"Rose\",\"Apple\"]', '[\"rose\"]', '[\"Musk\"]');").unwrap();
+
+        ensure_fragrance_notes_schema(&mut conn).unwrap();
+        ensure_fragrance_notes_schema(&mut conn).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM fragrance_notes", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 4);
+        let catalog_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM note_images", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(catalog_count, 3);
     }
 
     #[test]
