@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { backend, type Fragrance, type ParfumoNote, type ParfumoFragranceResult, type ParfumoFragranceDraft } from '$lib/backend';
+  import ParfumoNoteSearch from '$lib/ParfumoNoteSearch.svelte';
+  import { backend, type Fragrance, type ParfumoNote, type ParfumoStatus, type ParfumoFragranceResult, type ParfumoFragranceDraft } from '$lib/backend';
 
-  let { fragrance = $bindable(), importedNotes = $bindable(), entries, noteNames, error, saving, onSave }: {
+  let { fragrance = $bindable(), importedNotes = $bindable(), entries, noteNames, parfumoStatus, error, saving, onSave }: {
     fragrance: Fragrance;
     importedNotes: ParfumoNote[];
     entries: Fragrance[];
     noteNames: string[];
+    parfumoStatus: ParfumoStatus | null;
     error: string;
     saving: boolean;
     onSave: () => void;
@@ -116,7 +118,7 @@
   {#if step === 0}
     <section class="parfumo-import" aria-label="Import from Parfumo">
       <h2>Find on Parfumo</h2>
-      <p>Search by fragrance or brand, or paste a fragrance link. Connect Parfumo in Settings first.</p>
+      <p>Search by fragrance or brand, or paste a fragrance link.{#if parfumoStatus?.connected === false} Connect Parfumo in Settings first.{/if}</p>
       <form onsubmit={(event) => { event.preventDefault(); searchParfumo(); }}>
         <input aria-label="Parfumo fragrance search or link" placeholder="e.g. Dior Sauvage, or a Parfumo link" bind:value={parfumoQuery} disabled={parfumoBusy} />
         <button type="submit" class="primary-button" disabled={parfumoBusy || parfumoQuery.trim().length < 2}>{parfumoBusy ? 'Loading…' : 'Search Parfumo'}</button>
@@ -157,7 +159,10 @@
     {:else if step === 1}
       <div class="card-heading"><div><h2>Fragrance pyramid</h2><p>Build the scent, layer by layer. Add each note separately.</p></div></div>
       {#each [{ key: 'topNotes', title: 'Top notes', hint: 'The first impression', example: 'Candied apple' }, { key: 'heartNotes', title: 'Heart notes', hint: 'The heart of the scent', example: 'Caramel' }, { key: 'baseNotes', title: 'Base notes', hint: 'The lasting impression', example: 'Sandalwood' }] as group}
-        {@const kind = group.key as NoteLayer}<div class="note-section"><div class="note-title"><div><h3>{group.title}</h3><p>{group.hint}</p></div></div><div class="note-entry"><div class="note-input-wrap"><input aria-label={`Add ${group.title.toLowerCase()}`} role="combobox" aria-expanded={activeNoteInput === kind && suggestionsFor(kind).length > 0} aria-controls="note-suggestions" autocomplete="off" placeholder={`e.g. ${group.example}`} bind:value={noteInputs[kind]} onfocus={() => { activeNoteInput = kind; highlightedNoteIndex = -1; }} oninput={() => { activeNoteInput = kind; highlightedNoteIndex = -1; duplicateNoteLayer = null; }} onblur={() => activeNoteInput = null} onkeydown={(event) => handleNoteKeydown(event, kind)} />{#if activeNoteInput === kind && suggestionsFor(kind).length}<div class="note-suggestions" role="listbox" aria-label="Saved notes"><div class="suggestions-heading">Saved notes</div>{#each suggestionsFor(kind) as suggestion, index}<button type="button" class:highlighted={highlightedNoteIndex === index} tabindex="-1" onpointerdown={(event) => event.preventDefault()} onmouseenter={() => highlightedNoteIndex = index} onclick={() => addNote(kind, suggestion)}>{suggestion}</button>{/each}</div>{/if}</div><button type="button" onclick={() => addNote(kind)}>+ Add note</button></div>{#if duplicateNoteLayer === kind}<div class="note-error" role="alert">This note is already in the {group.title.toLowerCase()}.</div>{/if}<div class="note-chips">{#each fragrance[kind] as note, index}<button type="button" title={`Remove ${note}`} onclick={() => removeNote(kind, index)}>{note} <span>×</span></button>{/each}{#if fragrance[kind].length === 0}<span class="empty-hint">No notes added yet</span>{/if}</div></div>
+        {@const kind = group.key as NoteLayer}<div class="note-section"><div class="note-title"><div><h3>{group.title}</h3><p>{group.hint}</p></div></div><div class="note-entry"><div class="note-input-wrap"><input aria-label={`Add ${group.title.toLowerCase()}`} role="combobox" aria-expanded={activeNoteInput === kind && suggestionsFor(kind).length > 0} aria-controls="note-suggestions" autocomplete="off" placeholder={`e.g. ${group.example}`} bind:value={noteInputs[kind]} onfocus={() => { activeNoteInput = kind; highlightedNoteIndex = -1; }} oninput={() => { activeNoteInput = kind; highlightedNoteIndex = -1; duplicateNoteLayer = null; }} onblur={() => activeNoteInput = null} onkeydown={(event) => handleNoteKeydown(event, kind)} />{#if activeNoteInput === kind && suggestionsFor(kind).length}<div class="note-suggestions" role="listbox" aria-label="Saved notes"><div class="suggestions-heading">Saved notes</div>{#each suggestionsFor(kind) as suggestion, index}<button type="button" class:highlighted={highlightedNoteIndex === index} tabindex="-1" onpointerdown={(event) => event.preventDefault()} onmouseenter={() => highlightedNoteIndex = index} onclick={() => addNote(kind, suggestion)}>{suggestion}</button>{/each}</div>{/if}</div><button type="button" onclick={() => addNote(kind)}>+ Add note</button></div>{#if duplicateNoteLayer === kind}<div class="note-error" role="alert">This note is already in the {group.title.toLowerCase()}.</div>{/if}<ParfumoNoteSearch status={parfumoStatus} query={noteInputs[kind]} layer={group.title.toLowerCase()} selected={fragrance[kind]} onSelect={(note) => {
+          importedNotes = [...importedNotes.filter((existing) => existing.name.toLocaleLowerCase() !== note.name.toLocaleLowerCase()), note];
+          addNote(kind, note.name);
+        }} /><div class="note-chips">{#each fragrance[kind] as note, index}<button type="button" title={`Remove ${note}`} onclick={() => removeNote(kind, index)}>{note} <span>×</span></button>{/each}{#if fragrance[kind].length === 0}<span class="empty-hint">No notes added yet</span>{/if}</div></div>
       {/each}
     {:else}
       <div class="card-heading"><div><h2>Finishing touches</h2><p>Add context and a little more character.</p></div></div>

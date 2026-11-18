@@ -1276,6 +1276,28 @@ fn field(html: &Html, selector: &str) -> String {
         .unwrap_or_default()
 }
 
+fn fragrance_bottle_image(html: &Html) -> String {
+    // Keep the bottle selection separate from price and affiliate images.
+    for (selector, attributes) in [
+        (".p_image_wrapper img.p-main-img", &["data-src", "src"][..]),
+        (
+            ".p_image_wrapper img[itemprop='image']",
+            &["data-src", "src"][..],
+        ),
+        (".p_image_wrapper a.p_img", &["href"][..]),
+    ] {
+        for element in html.select(&Selector::parse(selector).expect("valid selector")) {
+            for attribute in attributes {
+                let url = image_link(element.value().attr(attribute).unwrap_or_default());
+                if !url.is_empty() {
+                    return url;
+                }
+            }
+        }
+    }
+    String::new()
+}
+
 fn parse_fragrance_results(body: &str) -> Result<Vec<ParfumoFragranceResult>, String> {
     check_fragrance_response(body)?;
     let html = Html::parse_document(body);
@@ -1476,13 +1498,20 @@ fn parse_fragrance(body: &str, source_url: String) -> Result<ParfumoFragranceDra
                         .or_else(|| v.get(0).and_then(|v| v.as_str()))
                         .or_else(|| v.get("url").and_then(|v| v.as_str()))
                 }) {
-                    draft.image_url = image_link(image);
+                    let image_url = image_link(image);
+                    if !image_url.is_empty() {
+                        draft.image_url = image_url;
+                    }
                 }
                 if let Some(description) = p.get("description").and_then(|v| v.as_str()) {
                     draft.description = description.to_owned();
                 }
             }
         }
+    }
+    let bottle_image = fragrance_bottle_image(&html);
+    if !bottle_image.is_empty() {
+        draft.image_url = bottle_image;
     }
     let year = field(
         &html,
@@ -1641,6 +1670,54 @@ mod fragrance_tests {
         ).unwrap();
         crate::ensure_fragrance_notes_schema(&mut conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn imports_the_supplied_bottle_image_instead_of_metadata_or_affiliate_images() {
+        let image = "https://media.parfumo.com/perfumes/1a/1ab109_liquid-brun-french-avenue_1200.jpg?width=720&aspect_ratio=1:1";
+        for metadata in [
+            "",
+            r#"<meta property="og:image" content="https://example.com/social-logo.png"><script type="application/ld+json">{"@type":"Product","image":"https://example.com/other-image.jpg"}</script>"#,
+        ] {
+            let body = format!(
+                "<h1>Liquid Brun</h1><span itemprop='brand'>French Avenue</span>{metadata}{}",
+                include_str!("../tests/fixtures/parfumo-bottle-image.html")
+            );
+            let draft = parse_fragrance(&body, String::new()).unwrap();
+            assert_eq!(draft.image_url, image);
+            assert!(
+                !draft
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("bottle image"))
+            );
+        }
+    }
+
+    #[test]
+    fn bottle_import_uses_its_link_or_metadata_when_the_main_image_is_missing() {
+        for (markup, expected) in [
+            (
+                r#"<div class="p_image_wrapper"><a class="p_img" href="https://media.parfumo.com/perfumes/bottle.jpg"><img class="p-main-img" src="data:image/png;base64,placeholder"></a></div>"#,
+                "https://media.parfumo.com/perfumes/bottle.jpg",
+            ),
+            (
+                r#"<div class="p_image_wrapper"><img src="https://www.parfumo.com/assets/images/comp_pr_cart.svg"><img src="https://www.parfumo.com/assets/images/affi/eb1_en.png"></div>"#,
+                "https://media.parfumo.com/perfumes/fallback.jpg",
+            ),
+            (
+                r#"<script type="application/ld+json">{"@type":"Product","image":"javascript:alert(1)"}</script>"#,
+                "https://media.parfumo.com/perfumes/fallback.jpg",
+            ),
+        ] {
+            let body = format!(
+                "<h1>Test</h1><span itemprop='brand'>House</span><meta property='og:image' content='https://media.parfumo.com/perfumes/fallback.jpg'>{markup}"
+            );
+            assert_eq!(
+                parse_fragrance(&body, String::new()).unwrap().image_url,
+                expected
+            );
+        }
     }
 
     #[test]

@@ -30,6 +30,24 @@
   let editorVersion = $state(0);
   let view = $state<'form' | 'library' | 'notes' | 'detail' | 'settings'>('library');
   let activeShelf = $state<'Collection' | 'Wishlist' | 'Empties'>('Collection');
+  // Capture the outgoing list before Svelte replaces its DOM, then restore
+  // after the destination (including its pagination) has rendered.
+  const listScrollPositions = new Map<string, number>();
+  let previousScreen = '';
+  $effect.pre(() => {
+    const screen = view === 'library' ? `library:${activeShelf}` : view;
+    if (screen === previousScreen) return;
+    if (previousScreen === 'notes' || previousScreen.startsWith('library:')) {
+      listScrollPositions.set(previousScreen, window.scrollY);
+    }
+    previousScreen = screen;
+    void tick().then(() => {
+      if (previousScreen === screen) {
+        window.scrollTo({ top: listScrollPositions.get(screen) ?? 0, behavior: 'instant' });
+      }
+    });
+  });
+
   let sidebarCollapsed = $state(false);
   let profileName = $state('Scentkeeper');
   let profilePicture = $state('');
@@ -610,7 +628,7 @@
     }
   }
   function openDetail(item: Fragrance) {
-    selectedId = item.id ?? null; activeShelf = item.shelf; view = 'detail'; error = ''; success = '';
+    selectedId = item.id ?? null; view = 'detail'; error = ''; success = '';
     fragranceAccords = [];
     fragranceAccordsError = '';
     if (item.id !== undefined) void loadFragranceAccords(item.id);
@@ -682,14 +700,14 @@
   </aside>
 
   <main>
-    <header class="topbar"><div class="topbar-inner"><button class="mobile-menu" type="button" aria-label="Toggle navigation" aria-expanded={mobileSidebarOpen} onclick={() => mobileSidebarOpen = !mobileSidebarOpen}><NavIcon name="menu" /></button><button class="top-back" type="button" aria-label="Back to collection" onclick={() => showShelf('Collection')}><NavIcon name="back" /></button><nav class="breadcrumb" aria-label="Breadcrumb">{#if view === 'library'}<span aria-current="page">{activeShelf}</span>{:else if view === 'form' || view === 'detail'}{@const shelf = view === 'detail' ? (selectedFragrance?.shelf ?? 'Collection') : fragrance.shelf}<button onclick={() => showShelf(shelf)}>{shelf}</button><span>/</span><span aria-current="page">{view === 'form' ? (fragrance.id === undefined ? 'Add fragrance' : 'Edit fragrance') : (selectedFragrance?.name ?? 'Fragrance')}</span>{:else}<button onclick={() => showShelf('Collection')}>Collection</button><span>/</span><span aria-current="page">{view === 'settings' ? 'Settings' : 'Perfume notes'}</span>{/if}</nav><div class="top-actions"><button class="update-check" aria-label={checkingUpdate ? 'Checking for updates' : 'Check for updates'} title={checkingUpdate ? 'Checking for updates' : 'Check for updates'} onclick={() => checkForUpdates()} disabled={checkingUpdate || installingUpdate}><NavIcon name="refresh" size={18} />{checkingUpdate ? 'Checking…' : 'Check for updates'}</button><span class="local-badge" title="Saved locally"><span class="local-text">Saved locally</span></span><button class="avatar profile-avatar" type="button" aria-label="Edit profile" title="Edit profile" onclick={editProfile}>{#if profilePicture}<img src={profilePicture} alt="" />{:else}{profileName.trim().charAt(0).toUpperCase() || 'S'}{/if}</button></div></div></header>
+    <header class="topbar"><div class="topbar-inner"><button class="mobile-menu" type="button" aria-label="Toggle navigation" aria-expanded={mobileSidebarOpen} onclick={() => mobileSidebarOpen = !mobileSidebarOpen}><NavIcon name="menu" /></button><button class="top-back" type="button" aria-label="Back to collection" onclick={() => showShelf(activeShelf)}><NavIcon name="back" /></button><nav class="breadcrumb" aria-label="Breadcrumb">{#if view === 'library'}<span aria-current="page">{activeShelf}</span>{:else if view === 'form' || view === 'detail'}{@const shelf = view === 'detail' ? activeShelf : fragrance.shelf}<button onclick={() => showShelf(shelf)}>{shelf}</button><span>/</span><span aria-current="page">{view === 'form' ? (fragrance.id === undefined ? 'Add fragrance' : 'Edit fragrance') : (selectedFragrance?.name ?? 'Fragrance')}</span>{:else}<button onclick={() => showShelf('Collection')}>Collection</button><span>/</span><span aria-current="page">{view === 'settings' ? 'Settings' : 'Perfume notes'}</span>{/if}</nav><div class="top-actions"><button class="update-check" aria-label={checkingUpdate ? 'Checking for updates' : 'Check for updates'} title={checkingUpdate ? 'Checking for updates' : 'Check for updates'} onclick={() => checkForUpdates()} disabled={checkingUpdate || installingUpdate}><NavIcon name="refresh" size={18} />{checkingUpdate ? 'Checking…' : 'Check for updates'}</button><span class="local-badge" title="Saved locally"><span class="local-text">Saved locally</span></span><button class="avatar profile-avatar" type="button" aria-label="Edit profile" title="Edit profile" onclick={editProfile}>{#if profilePicture}<img src={profilePicture} alt="" />{:else}{profileName.trim().charAt(0).toUpperCase() || 'S'}{/if}</button></div></div></header>
     {#if updateMessage}
       <div class="update-notice" role="status"><span>{updateMessage}</span>{#if availableUpdate && !installingUpdate}{#if canInstallUpdate}<button onclick={installUpdate}>Update and restart</button>{:else}<button onclick={() => openUrl('https://github.com/reaperhound/scentkeep/releases/latest')}>Open release page</button>{/if}{/if}</div>
     {/if}
     {#if view === 'form'}
-      {#key editorVersion}<EditorScreen bind:fragrance bind:importedNotes={importedFragranceNotes} {entries} noteNames={allNotes} {error} {saving} onSave={save} />{/key}
+      {#key editorVersion}<EditorScreen bind:fragrance bind:importedNotes={importedFragranceNotes} {entries} noteNames={allNotes} {parfumoStatus} {error} {saving} onSave={save} />{/key}
     {:else if view === 'detail' && selectedFragrance}
-      <DetailsScreen fragrance={selectedFragrance} {noteImages} accords={fragranceAccords} accordsLoading={fragranceAccordsLoading} accordsError={fragranceAccordsError} onBack={() => view = 'library'} onEdit={() => startEdit(selectedFragrance)} />
+      <DetailsScreen fragrance={selectedFragrance} {noteImages} accords={fragranceAccords} accordsLoading={fragranceAccordsLoading} accordsError={fragranceAccordsError} onBack={() => showShelf(activeShelf)} onEdit={() => startEdit(selectedFragrance)} />
     {:else if view === 'notes'}
       <NotesScreen
         notes={allNotes} {visibleNotes} {pagedNotes} notesByName={noteImagesByName}
@@ -714,13 +732,14 @@
         onOpenParfumo={openParfumoLogin} onSaveParfumo={saveParfumoConnection}
         onDisconnectParfumo={disconnectParfumo} onResetParfumo={resetParfumoBrowser}
       />
-    {:else}
+    {/if}
+    <div hidden={view !== 'library'}>
       <CollectionScreen
         {entries} {activeShelf} {success} {error} {csvReport} {csvBusy} {webdavBackup} {webdavSyncing}
         onSync={syncFromWebdav} onImport={(event) => importCsv(event, 'fragrances')} onExport={() => exportCsv('fragrances')}
         onAdd={startNew} onOpen={openDetail} onEdit={startEdit} onDelete={remove}
       />
-    {/if}
+    </div>
   </main>
 </div>
 
