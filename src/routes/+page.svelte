@@ -173,29 +173,49 @@
   });
 
   onMount(async () => {
-    try {
-      profileName = localStorage.getItem('scentkeep.profile.name') || 'Scentkeeper';
-      profilePicture = localStorage.getItem('scentkeep.profile.picture') || '';
-      entries = await backend.listFragrances();
-      noteImages = await backend.listNoteImages(); }
-    catch (e) { error = String(e); }
-    if (isTauri()) {
-      try {
-        backupFolder = await backend.getBackupFolder();
-        webdavBackup = await backend.getWebdavBackup();
-        backupDialogOpen = !backupFolder && !webdavBackup;
-        if (webdavBackup) { webdavUrl = webdavBackup.url; webdavUsername = webdavBackup.username; }
-      } catch (e) { error = `Could not load backup settings: ${String(e)}`; }
-      canInstallUpdate = await invoke<boolean>('can_install_update');
-      try { parfumoStatus = await backend.parfumoStatus(); }
-      catch (e) { error = `Could not load Parfumo connection: ${String(e)}`; }
-      if (parfumoStatus?.connected) {
-        try {
-          if (await backend.refreshParfumoNoteMetadata()) noteImages = await backend.listNoteImages();
-        } catch { /* Metadata can be retried the next time Parfumo is connected. */ }
-      }
-      void checkForUpdates(true);
+    profileName = localStorage.getItem('scentkeep.profile.name') || 'Scentkeeper';
+    profilePicture = localStorage.getItem('scentkeep.profile.picture') || '';
+
+    let refreshedNoteImagesLoaded = false;
+    const collectionRequest = Promise.allSettled([backend.listFragrances(), backend.listNoteImages()]).then(([fragrancesResult, noteImagesResult]) => {
+      if (fragrancesResult.status === 'fulfilled') entries = fragrancesResult.value;
+      else error = String(fragrancesResult.reason);
+      if (noteImagesResult.status === 'fulfilled') {
+        if (!refreshedNoteImagesLoaded) noteImages = noteImagesResult.value;
+      } else error = String(noteImagesResult.reason);
+    });
+    if (!isTauri()) {
+      await collectionRequest;
+      return;
     }
+
+    const backupSettingsRequest = Promise.allSettled([backend.getBackupFolder(), backend.getWebdavBackup()]).then(([backupFolderResult, webdavBackupResult]) => {
+      if (backupFolderResult.status === 'fulfilled') backupFolder = backupFolderResult.value;
+      if (webdavBackupResult.status === 'fulfilled') {
+        webdavBackup = webdavBackupResult.value;
+        if (webdavBackup) { webdavUrl = webdavBackup.url; webdavUsername = webdavBackup.username; }
+      }
+      if (backupFolderResult.status === 'fulfilled' && webdavBackupResult.status === 'fulfilled') backupDialogOpen = !backupFolder && !webdavBackup;
+      else {
+        const cause = backupFolderResult.status === 'rejected' ? backupFolderResult.reason : webdavBackupResult.status === 'rejected' ? webdavBackupResult.reason : '';
+        error = `Could not load backup settings: ${String(cause)}`;
+      }
+    });
+    const updateSupportRequest = invoke<boolean>('can_install_update').then((supported) => canInstallUpdate = supported);
+    const parfumoRequest = backend.parfumoStatus().then(async (status) => {
+      parfumoStatus = status;
+      if (!status.connected) return;
+      try {
+        if (await backend.refreshParfumoNoteMetadata()) {
+          const refreshedNoteImages = await backend.listNoteImages();
+          refreshedNoteImagesLoaded = true;
+          noteImages = refreshedNoteImages;
+        }
+      } catch { /* Metadata can be retried the next time Parfumo is connected. */ }
+    }).catch((cause) => error = `Could not load Parfumo connection: ${String(cause)}`);
+
+    await Promise.allSettled([collectionRequest, backupSettingsRequest, updateSupportRequest, parfumoRequest]);
+    void checkForUpdates(true);
   });
 
   onMount(() => {
