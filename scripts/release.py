@@ -61,7 +61,12 @@ def prepare(version):
     path.write_text(re.sub(r'^(version\s*=\s*)"[^"]+"',
                            lambda match: f'{match.group(1)}"{version}"',
                            contents, count=1, flags=re.M))
+    # Finalize npm's lockfile after both installers have run, then validate it
+    # with the same clean install used by the release workflow. A successful
+    # `npm install` alone does not guarantee that `npm ci` will accept the lock.
     for command in (("npm", "install"), ("bun", "install"),
+                    ("npm", "install", "--package-lock-only", "--ignore-scripts"),
+                    ("npm", "ci"),
                     ("cargo", "check", "--manifest-path", "src-tauri/Cargo.toml"),
                     ("npm", "run", "check")):
         print("+", *command, flush=True)
@@ -79,6 +84,8 @@ def publish():
         fail(f"Invalid release version: {version}")
     tag = f"v{version}"
     unused_tag(tag)
+    # Reject an invalid committed lockfile before pushing a release tag.
+    run("npm", "ci")
     branch = run("git", "branch", "--show-current", capture=True)
     if not branch:
         fail("Check out a branch before publishing.")
