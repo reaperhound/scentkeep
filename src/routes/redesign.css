@@ -1,4 +1,4 @@
-/* Hallmark · shape: app screen · genre: modern-minimal · theme: Coinbase CDS (by request) · redesign: restyle · nav: kept · signature: fragrance collection · states: existing loading, empty, error, full · v2.0.0 */
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Porcelain Blue, Candy pop, Velvet Dusk, Wildwood, Tropical Sorbet, Amber Glow, Crimson Ember, Scarlet Bloom, Citrus Breeze, Miami Pop, Velvet Saffron (by request) · modes: light+dark · redesign: restyle · nav: kept · signature: fragrance collection · states: existing loading, empty, error, full · v2.0.0 */
 /* Hallmark · pre-emit critique: preserve the working fragrance journal; replace editorial ornament with documented CDS tokens and consistent controls */
 /* Hallmark · answered F4 · the current form step is navigation state; primary actions share one blue recipe */
 /* Hallmark · answered F7 · shared field and button recipes implement the requested CDS system consistently */
@@ -103,9 +103,9 @@ input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 
 .listing-meta { display: flex; align-items: center; gap: var(--space-xs); margin-top: var(--space-xs); color: var(--color-muted); font-size: var(--text-xs); }
 .listing-meta img { width: 16px; height: 16px; object-fit: contain; }
 .card-menu-wrap { position: absolute; top: 8px; right: 8px; z-index: 4; }
-.card-menu { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--color-rule); border-radius: 50%; background: var(--color-card); font-size: 22px; line-height: 1; }
+.card-menu { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--color-rule); border-radius: 50%; background: var(--color-card); color: var(--color-ink); font-size: 22px; line-height: 1; }
 .card-menu:hover { background: var(--color-paper-2); }
-.card-dropdown, .category-options, .note-suggestions, .parfumo-note-results { position: absolute; z-index: 20; padding: var(--space-xs); border: 0; background: var(--color-card); box-shadow: 0 12px 28px var(--color-shadow); }
+.card-dropdown, .category-options, .note-suggestions, .parfumo-note-results { position: absolute; z-index: 20; padding: var(--space-xs); border: 0; background: var(--color-card); color: var(--color-ink); box-shadow: 0 12px 28px var(--color-shadow); }
 .card-dropdown { top: 42px; right: 0; min-width: 150px; }
 .card-dropdown button, .category-options button, .note-suggestions button, .parfumo-note-results button { display: block; width: 100%; min-height: 36px; padding: var(--space-xs) var(--space-xs); border: 0; background: transparent; color: var(--color-ink-2); text-align: left; font-size: var(--text-sm); }
 .card-dropdown button:hover, .category-options button:hover, .note-suggestions button:hover, .note-suggestions button.highlighted, .parfumo-note-results button:hover, .parfumo-note-results button.highlighted { background: var(--color-paper-2); }
@@ -127,7 +127,7 @@ input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 
 .progress button.done .step-number { border-color: var(--color-success); color: var(--color-success); }
 .connector { flex: 1; height: 1px; background: var(--color-rule); }
 .connector.filled { background: var(--color-ink); }
-.form-card { padding: 36px clamp(var(--space-lg),4vw,48px) var(--space-xl); border: 1px solid var(--color-card-edge); background: var(--color-card); }
+.form-card { padding: 36px clamp(var(--space-lg),4vw,48px) var(--space-xl); border: 1px solid var(--color-card-edge); background: var(--color-card); color: var(--color-ink); }
 .card-heading { margin-bottom: var(--space-xl); padding-bottom: var(--space-md); border-bottom: 1px solid var(--color-rule); }
 .card-heading h2 { font-size: 32px; }
 .card-heading p { margin-top: var(--space-xs); color: var(--color-muted); font-size: var(--text-md); }
@@ -353,12 +353,12 @@ input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 
 .avatar { border: 0; background: var(--color-accent-wash); color: var(--color-accent); font: 600 var(--text-md) var(--font-body); }
 .heading h1, .detail-main h1 { line-height: 1.15; }
 .primary-button, .back-button, .filter-button, .detail-edit, .parfumo-save-button, .parfumo-disconnect-button { border-radius: var(--radius-pill); min-height: 44px; font-weight: 600; border-color: transparent; }
-.primary-button { background: var(--color-accent); color: var(--color-accent-ink); }
-.primary-button:hover:not(:disabled) { background: var(--color-accent-hover); color: var(--color-accent-ink); }
+.primary-button { background: var(--color-action); color: var(--color-action-ink); }
+.primary-button:hover:not(:disabled) { background: var(--color-action-hover); color: var(--color-action-ink); }
 .back-button, .filter-button, .detail-edit, .parfumo-save-button { background: var(--color-paper-3); }
 .back-button:hover:not(:disabled), .filter-button:hover:not(:disabled), .detail-edit:hover, .parfumo-save-button:hover { background: var(--color-rule); color: var(--color-ink); }
 .parfumo-disconnect-button { background: var(--color-error-wash); color: var(--color-error); }
-.parfumo-disconnect-button:hover { background: var(--color-error); color: var(--color-accent-ink); }
+.parfumo-disconnect-button:hover { background: var(--color-error); color: var(--color-error-ink); }
 .search-box { min-height: 44px; border-color: var(--color-field-edge); border-radius: var(--radius-pill); background: var(--color-paper); padding-inline: var(--space-md); }
 .search-box:focus-within { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .search-box input { font-size: var(--text-md); }
@@ -407,3 +407,82 @@ input::placeholder, textarea::placeholder { color: var(--color-muted); opacity: 
   .new-note-form > button { min-height: 44px; }
 }
 @media (pointer: coarse) { button, .nav-link, .shelf-filters button, .layout-switch button, .pagination button, .update-check, .note-toolbar-actions button { min-height: 44px; } }
+
+.brand-icon { filter: var(--brand-filter); }
+.theme-toggle { display: inline-flex; align-items: center; justify-content: space-between; gap: var(--space-lg); min-height: 44px; padding: var(--space-xs) 0; border: 0; background: transparent; color: var(--color-ink); font-size: var(--text-md); }
+.theme-toggle-track { display: inline-flex; align-items: center; flex: none; width: 52px; height: 32px; padding: var(--space-2xs); border-radius: var(--radius-pill); background: var(--color-field-edge); }
+.theme-toggle-thumb { width: 24px; height: 24px; border-radius: var(--radius-pill); background: var(--color-paper); transition: transform var(--dur-micro) var(--ease-out); }
+.theme-toggle[aria-checked='true'] .theme-toggle-track { background: var(--color-accent); }
+.theme-toggle[aria-checked='true'] .theme-toggle-thumb { transform: translateX(20px); }
+.theme-toggle:hover .theme-toggle-track { outline: 2px solid var(--color-muted); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .theme-toggle-thumb { transition: none; } }
+
+.palette-options { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-bottom: var(--space-md); }
+.palette-button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-sm); min-height: 44px; padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-field-edge); border-radius: var(--radius-pill); background: var(--color-paper); color: var(--color-ink); font-size: var(--text-sm); }
+.palette-button:hover { background: var(--color-paper-3); }
+.palette-button.active { border-color: var(--color-accent); background: var(--color-accent-wash); color: var(--color-accent); }
+.palette-swatch { display: inline-flex; overflow: clip; border-radius: var(--radius-input); }
+.palette-swatch span { width: 12px; height: 20px; background: var(--color-huemint-cyan); }
+.palette-swatch span:nth-child(2) { background: var(--color-huemint-pink); }
+.palette-swatch span:nth-child(3) { background: var(--color-huemint-peach); }
+.palette-swatch span:nth-child(4) { background: var(--color-huemint-yellow); }
+
+.velvet-swatch span { background: var(--color-velvet-paper); }
+.velvet-swatch span:nth-child(2) { background: var(--color-velvet-navy); }
+.velvet-swatch span:nth-child(3) { background: var(--color-velvet-plum); }
+.velvet-swatch span:nth-child(4) { background: var(--color-velvet-rose); }
+.velvet-swatch { outline: 1px solid var(--color-field-edge); outline-offset: -1px; }
+
+.porcelain-swatch { outline: 1px solid var(--color-field-edge); outline-offset: -1px; }
+.porcelain-swatch span { background: var(--color-porcelain-swatch-1); }
+.porcelain-swatch span:nth-child(2) { background: var(--color-porcelain-swatch-2); }
+.porcelain-swatch span:nth-child(3) { background: var(--color-porcelain-swatch-3); }
+.porcelain-swatch span:nth-child(4) { background: var(--color-porcelain-swatch-4); }
+
+.wildwood-swatch span { background: var(--color-wildwood-green); }
+.wildwood-swatch span:nth-child(2) { background: var(--color-wildwood-charcoal); }
+.wildwood-swatch span:nth-child(3) { background: var(--color-wildwood-brown); }
+.wildwood-swatch span:nth-child(4) { background: var(--color-wildwood-paper); }
+.wildwood-swatch { outline: 1px solid var(--color-field-edge); outline-offset: -1px; }
+
+.tropical-swatch span { background: var(--color-tropical-1); }
+.tropical-swatch span:nth-child(2) { background: var(--color-tropical-2); }
+.tropical-swatch span:nth-child(3) { background: var(--color-tropical-3); }
+.tropical-swatch span:nth-child(4) { background: var(--color-tropical-4); }
+.tropical-swatch { outline: 1px solid var(--color-field-edge); outline-offset: -1px; }
+
+.amber-swatch span { background: var(--color-amber-1); }
+.amber-swatch span:nth-child(2) { background: var(--color-amber-2); }
+.amber-swatch span:nth-child(3) { background: var(--color-amber-3); }
+.amber-swatch span:nth-child(4) { background: var(--color-amber-4); }
+.amber-swatch { outline: 1px solid var(--color-field-edge); outline-offset: -1px; }
+
+.crimson-swatch span { background: var(--color-crimson-1); }
+.crimson-swatch span:nth-child(2) { background: var(--color-crimson-2); }
+.crimson-swatch span:nth-child(3) { background: var(--color-crimson-3); }
+.crimson-swatch span:nth-child(4) { background: var(--color-crimson-4); }
+.crimson-swatch { outline: 1px solid var(--color-field-edge); outline-offset: -1px; }
+
+.scarlet-swatch span { background: var(--color-scarlet-1); }
+.scarlet-swatch span:nth-child(2) { background: var(--color-scarlet-2); }
+.scarlet-swatch span:nth-child(3) { background: var(--color-scarlet-3); }
+.scarlet-swatch span:nth-child(4) { background: var(--color-scarlet-4); }
+.scarlet-swatch { outline: 1px solid var(--color-field-edge); outline-offset: -1px; }
+
+.citrus-swatch span { background: var(--color-citrus-1); }
+.citrus-swatch span:nth-child(2) { background: var(--color-citrus-2); }
+.citrus-swatch span:nth-child(3) { background: var(--color-citrus-3); }
+.citrus-swatch span:nth-child(4) { background: var(--color-citrus-4); }
+.citrus-swatch { outline: 1px solid var(--color-field-edge); outline-offset: -1px; }
+
+.miami-swatch span { background: var(--color-miami-1); }
+.miami-swatch span:nth-child(2) { background: var(--color-miami-2); }
+.miami-swatch span:nth-child(3) { background: var(--color-miami-3); }
+.miami-swatch span:nth-child(4) { background: var(--color-miami-4); }
+.miami-swatch { outline: 1px solid var(--color-field-edge); outline-offset: -1px; }
+
+.saffron-swatch span { background: var(--color-saffron-1); }
+.saffron-swatch span:nth-child(2) { background: var(--color-saffron-2); }
+.saffron-swatch span:nth-child(3) { background: var(--color-saffron-3); }
+.saffron-swatch span:nth-child(4) { background: var(--color-saffron-4); }
+.saffron-swatch { outline: 1px solid var(--color-field-edge); outline-offset: -1px; }

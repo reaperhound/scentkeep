@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      try {
+        const mode = localStorage.getItem('scentkeep.theme');
+        if (mode === 'light' || mode === 'dark') document.documentElement.dataset.mode = mode;
+        const palette = localStorage.getItem('scentkeep.palette');
+        if (['huemint', 'velvet-dusk', 'wildwood', 'tropical-sorbet', 'amber-glow', 'crimson-ember', 'scarlet-bloom', 'citrus-breeze', 'miami-pop', 'velvet-saffron'].includes(palette)) document.documentElement.dataset.palette = palette;
+      } catch {}
+    </script>
     <title>Scentkeep</title>
     %sveltekit.head%
   </head>
