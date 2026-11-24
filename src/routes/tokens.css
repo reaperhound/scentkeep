@@ -1,23 +1,29 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Coinbase CDS (by request) · redesign: restyle · nav: kept · signature: fragrance collection · states: existing loading, empty, error, full · v2.0.0 */
+/* Hallmark · pre-emit critique: preserve the working fragrance journal; replace editorial ornament with documented CDS tokens and consistent controls */
 :root {
   color-scheme: light;
   --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px; --space-4xl: 144px;
-  --text-xs: 0.75rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.2rem; --text-xl: 1.44rem; --text-2xl: 1.728rem; --text-3xl: 2.074rem;
+  --text-xs: 0.8125rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.25rem; --text-xl: 1.75rem; --text-2xl: 2rem; --text-3xl: 2.5rem;
   --text-display-s: 1.44rem; --text-display: 1.728rem; --text-section: 1.2rem; --text-title: 1rem; --text-lead: 1rem;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --ease-in: cubic-bezier(0.7, 0, 0.84, 0); --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
-  --color-error: oklch(52% 0.19 27); --color-success: oklch(50% 0.12 150);
   --container: 1440px; --gutter: 64px; --gap-columns: 32px; --section-gap-s: 120px; --section-gap: 144px; --section-gap-l: 176px;
   --z-base: 1; --z-raised: 10; --z-dropdown: 100; --z-sticky: 200; --z-sticky-nav: 300; --z-modal: 400; --z-toast: 500; --z-tooltip: 600;
-  --color-paper: oklch(94.5% 0.010 76); --color-paper-2: oklch(91.8% 0.013 74); --color-paper-3: oklch(88% 0.015 72);
-  --color-ink: oklch(19% 0.024 52); --color-ink-2: oklch(31% 0.018 54); --color-muted: oklch(47% 0.014 60);
-  --color-rule: oklch(81% 0.011 70);
-  --color-accent: oklch(41% 0.075 248); --color-accent-ink: oklch(96% 0.008 76); --color-focus: oklch(50% 0.095 248);
-  --color-card: oklch(97.6% 0.007 82); --color-card-edge: oklch(86% 0.012 72); --color-pencil: oklch(52% 0.010 62);
-  --card-lit: oklch(98.4% 0.006 84); --card-shade: oklch(96.4% 0.008 78); --lit: oklch(99.6% 0.004 85 / 0.9);
-  --stain-1: oklch(70% 0.075 14); --stain-2: oklch(66% 0.055 132); --stain-3: oklch(60% 0.080 58); --stain-4: oklch(68% 0.045 206);
-  --font-display: "Sentient", Georgia, serif; --font-body: "Hanken Grotesk", system-ui, sans-serif;
-  --font-outlier: var(--font-body);
-  --radius-card: 0; --radius-pill: 3px; --rule-hair: 1px; --rule-head: 1px;
-  --shadow-card: 0 0 0 1px oklch(30% 0.03 55 / 0.05), 0.5px 1px 1px oklch(30% 0.03 55 / 0.08), 3px 8px 14px -6px oklch(30% 0.03 55 / 0.14), 14px 36px 64px -28px oklch(30% 0.03 55 / 0.3);
-  --tracking-display: -0.018em; --tracking-statement: -0.022em; --display-weight: 300; --statement-weight: 300; --serif-small: 400;
+  --color-paper: rgb(255, 255, 255); --color-paper-2: rgb(247, 248, 249); --color-paper-3: rgb(238, 240, 243);
+  --color-ink: rgb(10, 11, 13); --color-ink-2: rgb(50, 53, 61); --color-muted: rgb(91, 97, 110);
+  --color-rule: rgb(222, 225, 231); --color-field-edge: rgb(137, 144, 158);
+  --color-accent: rgb(0, 82, 255); --color-accent-hover: rgb(0, 75, 235); --color-accent-ink: rgb(255, 255, 255); --color-focus: var(--color-accent);
+  --color-card: var(--color-paper); --color-card-edge: var(--color-rule); --color-pencil: var(--color-muted);
+  --card-lit: var(--color-paper-2); --card-shade: var(--color-paper-3); --lit: var(--color-paper);
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: var(--font-body); --font-outlier: var(--font-body);
+  --radius-input: 8px; --radius-card: 16px; --radius-pill: 999px; --radius-menu: 12px;
+  --rule-hair: 1px; --rule-head: 1px; --shadow-card: none;
+  --tracking-display: -0.02em; --tracking-statement: -0.02em; --display-weight: 600; --statement-weight: 600; --serif-small: 400;
+  --color-overlay: rgba(50, 53, 61, 0.33); --color-shadow: rgba(10, 11, 13, 0.12);
+  --color-error: rgb(207, 32, 47); --color-success: rgb(9, 133, 81);
+  --color-error-wash: rgb(255, 245, 246); --color-success-wash: rgb(245, 255, 251); --color-accent-wash: rgb(245, 248, 255);
+  --color-accord-track: var(--color-paper-3); --color-accord-skeleton: var(--color-rule);
+  --color-accord-1: rgb(176, 202, 255); --color-accord-2: rgb(163, 235, 205); --color-accord-3: rgb(253, 213, 176);
+  --color-accord-4: rgb(214, 218, 254); --color-accord-5: rgb(136, 237, 251); --color-accord-6: rgb(251, 212, 250); --color-accord-7: rgb(198, 247, 209);
 }
