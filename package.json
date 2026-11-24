@@ -3,6 +3,7 @@
   "version": "0.2.8",
   "description": "",
   "type": "module",
+  "packageManager": "npm@10.9.7",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",

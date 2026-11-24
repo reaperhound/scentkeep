@@ -10,7 +10,9 @@ From a clean working tree, choose an unused version and run:
 python3 scripts/release.py prepare 0.2.0
 ```
 
-The script updates the three version files and both JavaScript lockfiles, refreshes the Rust lockfile, and runs `npm run check`. Review the diff and commit the release changes. If a check fails, fix it and rerun the failed check before committing.
+The script uses the npm version pinned in `package.json`, matching CI. It updates the three version files and both JavaScript lockfiles, validates `npm ci`, refreshes the Rust lockfile, and runs `npm run check`. Review the diff and commit the release changes. If a check fails, fix it and rerun the failed check before committing.
+
+Keep the npm pin when preparing releases: npm 11.6.2 can omit optional WebAssembly dependencies from this lockfile, producing a lockfile that npm 10 rejects.
 
 ## Publish
 

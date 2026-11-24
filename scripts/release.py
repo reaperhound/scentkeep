@@ -22,6 +22,12 @@ def fail(message):
     raise SystemExit(message)
 
 
+def npm_command(*args):
+    # Use the same npm as CI, regardless of the developer's global npm version.
+    package_manager = json.loads((ROOT / "package.json").read_text())["packageManager"]
+    return ("npx", "--yes", f"--package={package_manager}", "npm", *args)
+
+
 def versions():
     cargo = (ROOT / "src-tauri/Cargo.toml").read_text()
     return {
@@ -64,11 +70,11 @@ def prepare(version):
     # Finalize npm's lockfile after both installers have run, then validate it
     # with the same clean install used by the release workflow. A successful
     # `npm install` alone does not guarantee that `npm ci` will accept the lock.
-    for command in (("npm", "install"), ("bun", "install"),
-                    ("npm", "install", "--package-lock-only", "--ignore-scripts"),
-                    ("npm", "ci"),
+    for command in (npm_command("install"), ("bun", "install"),
+                    npm_command("install", "--package-lock-only", "--ignore-scripts"),
+                    npm_command("ci"),
                     ("cargo", "check", "--manifest-path", "src-tauri/Cargo.toml"),
-                    ("npm", "run", "check")):
+                    npm_command("run", "check")):
         print("+", *command, flush=True)
         run(*command)
     print(f"Prepared v{version}. Review the diff, commit it, then run: python3 scripts/release.py publish")
@@ -85,7 +91,7 @@ def publish():
     tag = f"v{version}"
     unused_tag(tag)
     # Reject an invalid committed lockfile before pushing a release tag.
-    run("npm", "ci")
+    run(*npm_command("ci"))
     branch = run("git", "branch", "--show-current", capture=True)
     if not branch:
         fail("Check out a branch before publishing.")
